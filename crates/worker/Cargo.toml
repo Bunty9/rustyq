@@ -1,0 +1,22 @@
+[package]
+name = "rustyq-worker"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "rustyq worker daemon — claims jobs and runs them."
+
+[[bin]]
+name = "rustyq-worker"
+path = "src/main.rs"
+
+[dependencies]
+rustyq-core = { path = "../core" }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+sqlx = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+uuid = { workspace = true }

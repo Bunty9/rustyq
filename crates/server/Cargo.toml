@@ -1,0 +1,26 @@
+[package]
+name = "rustyq-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Axum HTTP server exposing rustyq enqueue/status endpoints."
+
+[[bin]]
+name = "rustyq-server"
+path = "src/main.rs"
+
+[dependencies]
+rustyq-core = { path = "../core" }
+tokio = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }

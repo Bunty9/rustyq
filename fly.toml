@@ -1,0 +1,39 @@
+# Fly.io deployment manifest for rustyq.
+#
+# Provision a Neon Postgres database, then:
+#   fly secrets set DATABASE_URL='postgres://...neon.tech/rustyq?sslmode=require'
+#   fly deploy
+#
+# Workers run as a separate process group via fly.toml [processes].
+
+app = "rustyq"
+primary_region = "sin"
+kill_signal = "SIGINT"
+kill_timeout = "30s"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[processes]
+  server = "/usr/local/bin/rustyq-server"
+  worker = "/usr/local/bin/rustyq-worker"
+
+[env]
+  RUST_LOG = "info"
+  RUSTYQ_BIND = "0.0.0.0:8080"
+  RUSTYQ_QUEUES = "default"
+  RUSTYQ_CONCURRENCY = "8"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["server"]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

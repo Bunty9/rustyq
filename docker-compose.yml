@@ -1,0 +1,65 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: rustyq
+      POSTGRES_PASSWORD: rustyq
+      POSTGRES_DB: rustyq
+    ports:
+      - "5432:5432"
+    volumes:
+      - rustyq_pg_data:/var/lib/postgresql/data
+      - ./migrations/0001_init.sql:/docker-entrypoint-initdb.d/0001_init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rustyq -d rustyq"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  rustyq-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://rustyq:rustyq@postgres:5432/rustyq
+      RUSTYQ_BIND: 0.0.0.0:8080
+      RUST_LOG: info
+    ports:
+      - "8080:8080"
+    entrypoint: ["/usr/local/bin/rustyq-server"]
+
+  rustyq-worker-1:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://rustyq:rustyq@postgres:5432/rustyq
+      RUSTYQ_QUEUES: default
+      RUSTYQ_CONCURRENCY: "8"
+      RUSTYQ_WORKER_ID: worker-1
+      RUST_LOG: info
+    entrypoint: ["/usr/local/bin/rustyq-worker"]
+
+  rustyq-worker-2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://rustyq:rustyq@postgres:5432/rustyq
+      RUSTYQ_QUEUES: default
+      RUSTYQ_CONCURRENCY: "8"
+      RUSTYQ_WORKER_ID: worker-2
+      RUST_LOG: info
+    entrypoint: ["/usr/local/bin/rustyq-worker"]
+
+volumes:
+  rustyq_pg_data:
