@@ -67,14 +67,6 @@ clap = { version = "4", features = ["derive", "env"] }
 # Python bindings
 pyo3 = { version = "0.22", features = ["extension-module"] }
 
-[workspace.dev-dependencies]
-testcontainers = "0.23"
-testcontainers-modules = { version = "0.11", features = ["postgres", "redis"] }
-wiremock = "0.6"
-proptest = "1"
-divan = "0.1"
-criterion = "0.5"
-
 [profile.release]
 lto = "fat"
 codegen-units = 1
