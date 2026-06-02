@@ -5,8 +5,9 @@ services:
       POSTGRES_USER: rustyq
       POSTGRES_PASSWORD: rustyq
       POSTGRES_DB: rustyq
-    ports:
-      - "5432:5432"
+    # Port 5432 deliberately not published — host may already run a Postgres.
+    # Server and workers reach this container via the compose network. Use
+    # `docker compose exec postgres psql ...` for ad-hoc queries.
     volumes:
       - rustyq_pg_data:/var/lib/postgresql/data
       - ./migrations/0001_init.sql:/docker-entrypoint-initdb.d/0001_init.sql:ro
