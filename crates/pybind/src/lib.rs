@@ -3,6 +3,8 @@
 //! Built into a Python wheel via `maturin build` (see `pyproject.toml`).
 //! Import as `import rustyq; c = rustyq.Client("http://localhost:8080")`.
 
+#![allow(clippy::useless_conversion)]
+
 use pyo3::prelude::*;
 
 #[pyclass]

@@ -17,6 +17,21 @@ jobs:
       fail-fast: false
       matrix:
         rust: [stable, beta]
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=2s
+          --health-timeout=3s
+          --health-retries=20
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
@@ -32,8 +47,11 @@ jobs:
         run: cargo fmt --all -- --check
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+      # Integration tests share LISTEN/NOTIFY channels across isolated schemas,
+      # so cross-binary parallelism races. Force serial runs until we scope the
+      # NOTIFY channel per-schema (tracked in PROGRESS.md).
       - name: cargo nextest
-        run: cargo nextest run --workspace --no-fail-fast
+        run: cargo nextest run --workspace --no-fail-fast --test-threads=1
 
   deny:
     name: cargo-deny

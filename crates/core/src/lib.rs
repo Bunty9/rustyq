@@ -4,6 +4,9 @@
 //! Postgres via `FOR UPDATE SKIP LOCKED`, runs it, and finalizes the row
 //! based on outcome (done / requeue with exponential backoff / dead).
 
+pub mod handler;
+pub use handler::{Handler, HandlerFut, Registry, RegistryBuilder};
+
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
 use sqlx::{postgres::PgListener, FromRow, PgPool};
@@ -65,15 +68,23 @@ pub struct Worker {
     pub id: String,
     pub queues: Vec<String>,
     pub concurrency: usize,
+    pub registry: Arc<Registry>,
 }
 
 impl Worker {
-    pub fn new(pool: PgPool, id: String, queues: Vec<String>, concurrency: usize) -> Self {
+    pub fn new(
+        pool: PgPool,
+        id: String,
+        queues: Vec<String>,
+        concurrency: usize,
+        registry: Arc<Registry>,
+    ) -> Self {
         Self {
             pool,
             id,
             queues,
             concurrency,
+            registry,
         }
     }
 
@@ -83,6 +94,7 @@ impl Worker {
         listener.listen("rustyq_new").await?;
 
         let sem = Arc::new(Semaphore::new(self.concurrency));
+        let registry = self.registry.clone();
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => break,
@@ -98,8 +110,9 @@ impl Worker {
                 };
                 let pool = self.pool.clone();
                 let id = self.id.clone();
+                let registry = registry.clone();
                 tokio::spawn(async move {
-                    let result = run_job(&job).await;
+                    let result = registry.dispatch(&job).await;
                     if let Err(e) = finalize(&pool, &id, &job, result).await {
                         tracing::error!(?e, job_id = %job.id, "finalize failed");
                     }
@@ -133,14 +146,6 @@ impl Worker {
         .await?;
         Ok(row)
     }
-}
-
-/// Placeholder job runner — Phase 1 has no real job dispatch yet. Returning
-/// `Ok(())` lets the finalize machinery be exercised end-to-end with
-/// `enqueue → claim → done`.
-async fn run_job(_job: &Job) -> anyhow::Result<()> {
-    // TODO(phase-2): dispatch by `job.kind` to a registered handler.
-    Ok(())
 }
 
 /// Finalize a claimed job. On success → `done`. On error past the attempt

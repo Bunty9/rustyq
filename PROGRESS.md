@@ -25,12 +25,22 @@
 
 ## Next sprint — Phase 2: real dispatch + observability
 
-- [ ] `run_job` dispatches by `kind` to a registered async handler
+- [x] `run_job` dispatches by `kind` to a registered async handler
+      (`crates/core/src/handler.rs` — `Handler` trait + `Registry`)
+- [x] Built-in handlers: `noop`, `sleep`, `fail_once`
+      (`crates/worker/src/handlers.rs`)
+- [x] Integration tests cover dispatch, retry, dead-letter (TDD)
+      (`crates/core/tests/{dispatch,retry,dead}.rs` against
+      `TEST_DATABASE_URL`)
+- [x] CI runs Postgres service container + serial nextest
 - [ ] Prometheus `/metrics` endpoint on the server (`metrics-exporter-prometheus`)
 - [ ] `tracing-opentelemetry` OTLP exporter behind a flag
 - [ ] Switch back to `sqlx::query!` macros + `sqlx prepare` in CI
 - [ ] `GET /jobs/{id}` status endpoint
 - [ ] Criterion bench harness in `crates/core/benches/`
+- [ ] Scope `rustyq_new` LISTEN/NOTIFY channel per database/schema so
+      tests can run in parallel without cross-talk (current workaround:
+      `--test-threads=1`).
 
 ## Done
 

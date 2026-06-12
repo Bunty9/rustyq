@@ -1,9 +1,13 @@
 //! rustyq-worker entrypoint — connects to Postgres, boots a `Worker`,
 //! cancels on Ctrl-C.
 
+mod handlers;
+
 use clap::Parser;
-use rustyq_core::Worker;
+use handlers::{FailOnce, Noop, Sleep};
+use rustyq_core::{Registry, Worker};
 use sqlx::postgres::PgPoolOptions;
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
@@ -55,6 +59,13 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!(%id, queues = ?queues, concurrency = args.concurrency, "starting worker");
 
+    // Build the handler registry with all built-in handlers.
+    let registry = Registry::builder()
+        .register("noop", Noop)
+        .register("sleep", Sleep)
+        .register("fail_once", FailOnce::new())
+        .build();
+
     let cancel = CancellationToken::new();
     let cancel_for_signal = cancel.clone();
     tokio::spawn(async move {
@@ -64,7 +75,7 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    let worker = Worker::new(pool, id, queues, args.concurrency);
+    let worker = Worker::new(pool, id, queues, args.concurrency, Arc::new(registry));
     worker.run(cancel).await?;
     Ok(())
 }
