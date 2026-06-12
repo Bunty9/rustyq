@@ -103,82 +103,111 @@ impl Worker {
                 _ = listener.recv() => {}, // wake on enqueue notify
                 _ = sleep(Duration::from_secs(1)) => {}, // fallback poll
             }
-            // Drain as many jobs as concurrency allows
-            while sem.available_permits() > 0 {
-                let permit = sem.clone().acquire_owned().await?;
-                let Some(job) = self.claim_one().await? else {
-                    drop(permit);
+            // Drain greedily: claim_batch reads up to `available_permits()`
+            // rows in a single UPDATE, then we hand each row to its own task
+            // gated by a semaphore permit. The inner loop terminates when
+            // the batch is shorter than requested (queue empty) — no need
+            // for a separate "empty?" round-trip.
+            loop {
+                let n = sem.available_permits();
+                if n == 0 {
                     break;
-                };
+                }
+                let batch = self.claim_batch(n).await?;
+                if batch.is_empty() {
+                    break;
+                }
+                let batch_len = batch.len();
+                for job in batch {
+                    // Acquire one permit per job in the batch. `claim_batch`
+                    // bounded its query by available_permits() before the
+                    // batch was claimed, so acquire is uncontended in the
+                    // steady state.
+                    let permit = sem.clone().acquire_owned().await?;
+                    let claimed_at = Utc::now();
+                    let pool = self.pool.clone();
+                    let id = self.id.clone();
+                    let registry = registry.clone();
+                    tokio::spawn(async move {
+                        metrics::counter!(
+                            "rustyq_jobs_claimed_total",
+                            "queue" => job.queue.clone(),
+                            "worker" => id.clone()
+                        )
+                        .increment(1);
 
-                // Capture the claim timestamp now (cheap monotonic + cheap
-                // wall-clock); record all per-job metrics inside the spawn
-                // closure so we read directly from the moved `job`/`id` and
-                // avoid an extra clone of `job.queue` per claim.
-                let claimed_at = Utc::now();
-                let pool = self.pool.clone();
-                let id = self.id.clone();
-                let registry = registry.clone();
-                tokio::spawn(async move {
-                    metrics::counter!(
-                        "rustyq_jobs_claimed_total",
-                        "queue" => job.queue.clone(),
-                        "worker" => id.clone()
-                    )
-                    .increment(1);
+                        let latency_secs = (claimed_at - job.created_at)
+                            .num_milliseconds() as f64
+                            / 1000.0;
+                        metrics::histogram!(
+                            "rustyq_dispatch_latency_seconds",
+                            "queue" => job.queue.clone()
+                        )
+                        .record(latency_secs.max(0.0));
 
-                    let latency_secs = (claimed_at - job.created_at)
-                        .num_milliseconds() as f64
-                        / 1000.0;
-                    metrics::histogram!(
-                        "rustyq_dispatch_latency_seconds",
-                        "queue" => job.queue.clone()
-                    )
-                    .record(latency_secs.max(0.0));
+                        let started = Instant::now();
+                        let result = registry.dispatch(&job).await;
+                        let run_secs = started.elapsed().as_secs_f64();
 
-                    let started = Instant::now();
-                    let result = registry.dispatch(&job).await;
-                    let run_secs = started.elapsed().as_secs_f64();
+                        metrics::histogram!(
+                            "rustyq_job_run_duration_seconds",
+                            "queue" => job.queue.clone(),
+                            "kind"  => job.kind.clone()
+                        )
+                        .record(run_secs);
 
-                    metrics::histogram!(
-                        "rustyq_job_run_duration_seconds",
-                        "queue" => job.queue.clone(),
-                        "kind"  => job.kind.clone()
-                    )
-                    .record(run_secs);
-
-                    if let Err(e) = finalize(&pool, &id, &job, result).await {
-                        tracing::error!(?e, job_id = %job.id, "finalize failed");
-                    }
-                    drop(permit);
-                });
+                        if let Err(e) = finalize(&pool, &id, &job, result).await {
+                            tracing::error!(?e, job_id = %job.id, "finalize failed");
+                        }
+                        drop(permit);
+                    });
+                }
+                // If we got fewer than asked, queue is drained — stop the
+                // greedy loop and go back to LISTEN/NOTIFY waiting.
+                if batch_len < n {
+                    break;
+                }
             }
         }
         Ok(())
     }
 
-    /// Claim exactly one runnable job. `SKIP LOCKED` makes this safe under
-    /// many parallel workers — no contention, no row locks held across the
-    /// network round-trip.
-    pub async fn claim_one(&self) -> sqlx::Result<Option<Job>> {
-        let row = sqlx::query_as::<_, Job>(
+    /// Claim up to `n` runnable jobs in a single round-trip. `SKIP LOCKED`
+    /// makes this safe across many parallel workers. Returns an empty `Vec`
+    /// when `n == 0` without hitting Postgres.
+    ///
+    /// Prefer this over a loop of `claim_one`: each `UPDATE … RETURNING`
+    /// trip is at least one network round-trip plus a `fdatasync`, so
+    /// batching keeps per-job overhead bounded as concurrency grows.
+    pub async fn claim_batch(&self, n: usize) -> sqlx::Result<Vec<Job>> {
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+        let rows = sqlx::query_as::<_, Job>(
             r#"
             UPDATE jobs SET state='running', locked_at=now(), locked_by=$1, attempts=attempts+1
-            WHERE id = (
+            WHERE id IN (
               SELECT id FROM jobs
               WHERE state='queued' AND run_at <= now() AND queue = ANY($2)
               ORDER BY priority DESC, run_at
               FOR UPDATE SKIP LOCKED
-              LIMIT 1
+              LIMIT $3
             )
             RETURNING *
             "#,
         )
         .bind(&self.id)
         .bind(&self.queues)
-        .fetch_optional(&self.pool)
+        .bind(n as i64)
+        .fetch_all(&self.pool)
         .await?;
-        Ok(row)
+        Ok(rows)
+    }
+
+    /// Claim exactly one runnable job. Thin wrapper around
+    /// [`Worker::claim_batch`] kept for callers that only need a single row.
+    pub async fn claim_one(&self) -> sqlx::Result<Option<Job>> {
+        Ok(self.claim_batch(1).await?.into_iter().next())
     }
 }
 
