@@ -11,10 +11,12 @@ use rustyq_server::router;
 use serde_json::json;
 use tower::ServiceExt;
 
-// The metrics recorder is global. Install once per process via the server's
-// `metrics_handle()` function so all tests share the same handle.
-fn ensure_recorder() -> rustyq_server::PrometheusHandle {
-    rustyq_server::metrics_handle()
+// The metrics recorder is global. Tests rely on the router itself triggering
+// `metrics_handle()` on the first /metrics call, but installing it eagerly
+// here ensures the `describe_*` HELP strings are registered before any other
+// metric is touched.
+fn ensure_recorder() {
+    let _ = rustyq_server::metrics_handle();
 }
 
 #[tokio::test]
@@ -24,7 +26,7 @@ async fn metrics_endpoint_returns_200() {
         return;
     };
 
-    let _handle = ensure_recorder();
+    ensure_recorder();
     let app = router(pool);
 
     let req = Request::builder()
@@ -57,7 +59,7 @@ async fn enqueue_increments_counter() {
         return;
     };
 
-    let _handle = ensure_recorder();
+    ensure_recorder();
     let app = router(pool);
 
     // POST /jobs twice — both should succeed.

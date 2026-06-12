@@ -43,7 +43,8 @@ pub fn handle() -> PrometheusHandle {
             );
             metrics::describe_counter!(
                 "rustyq_jobs_finished_total",
-                "Total number of jobs that reached a terminal state (done, failed, dead)."
+                "Total number of jobs that reached a terminal state (done, dead). \
+                 Jobs requeued after a transient failure do not increment this counter."
             );
             metrics::describe_histogram!(
                 "rustyq_dispatch_latency_seconds",

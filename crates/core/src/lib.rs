@@ -111,27 +111,31 @@ impl Worker {
                     break;
                 };
 
-                // Metrics: claimed counter
-                metrics::counter!(
-                    "rustyq_jobs_claimed_total",
-                    "queue" => job.queue.clone(),
-                    "worker" => self.id.clone()
-                )
-                .increment(1);
-
-                // Dispatch latency: time from job creation until claim.
-                let latency_secs = (Utc::now() - job.created_at).num_milliseconds() as f64
-                    / 1000.0;
-                metrics::histogram!(
-                    "rustyq_dispatch_latency_seconds",
-                    "queue" => job.queue.clone()
-                )
-                .record(latency_secs.max(0.0));
-
+                // Capture the claim timestamp now (cheap monotonic + cheap
+                // wall-clock); record all per-job metrics inside the spawn
+                // closure so we read directly from the moved `job`/`id` and
+                // avoid an extra clone of `job.queue` per claim.
+                let claimed_at = Utc::now();
                 let pool = self.pool.clone();
                 let id = self.id.clone();
                 let registry = registry.clone();
                 tokio::spawn(async move {
+                    metrics::counter!(
+                        "rustyq_jobs_claimed_total",
+                        "queue" => job.queue.clone(),
+                        "worker" => id.clone()
+                    )
+                    .increment(1);
+
+                    let latency_secs = (claimed_at - job.created_at)
+                        .num_milliseconds() as f64
+                        / 1000.0;
+                    metrics::histogram!(
+                        "rustyq_dispatch_latency_seconds",
+                        "queue" => job.queue.clone()
+                    )
+                    .record(latency_secs.max(0.0));
+
                     let started = Instant::now();
                     let result = registry.dispatch(&job).await;
                     let run_secs = started.elapsed().as_secs_f64();
