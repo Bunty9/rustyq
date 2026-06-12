@@ -1,8 +1,8 @@
-//! Enqueue + status HTTP API for rustyq-server.
+//! Enqueue + status + metrics HTTP API for rustyq-server.
 
 use axum::{
     extract::{Path, State},
-    http::StatusCode,
+    http::{header, StatusCode},
     routing::{get, post},
     Json, Router,
 };
@@ -38,6 +38,15 @@ async fn enqueue(
     .execute(&pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Increment enqueue counter.
+    metrics::counter!(
+        "rustyq_jobs_enqueued_total",
+        "queue" => req.queue.clone(),
+        "kind"  => req.kind.clone()
+    )
+    .increment(1);
+
     // Fire-and-forget — workers also fall back to a 1s poll.
     let _ = sqlx::query("NOTIFY rustyq_new").execute(&pool).await;
     Ok(Json(serde_json::json!({ "id": id })))
@@ -75,9 +84,19 @@ async fn status(
         .ok_or((StatusCode::NOT_FOUND, "no such job".to_string()))
 }
 
+async fn metrics_handler() -> (StatusCode, [(header::HeaderName, &'static str); 1], String) {
+    let body = crate::metrics::handle().render();
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+        body,
+    )
+}
+
 pub fn router(pool: PgPool) -> Router {
     Router::new()
         .route("/jobs", post(enqueue))
         .route("/jobs/{id}", get(status))
+        .route("/metrics", get(metrics_handler))
         .with_state(pool)
 }

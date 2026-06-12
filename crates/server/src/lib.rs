@@ -3,5 +3,8 @@
 //! without booting the binary.
 
 mod api;
+pub mod metrics;
 
 pub use api::router;
+pub use metrics::handle as metrics_handle;
+pub use metrics_exporter_prometheus::PrometheusHandle;
