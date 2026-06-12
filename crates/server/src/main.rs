@@ -1,9 +1,9 @@
-//! rustyq-server entrypoint — boots axum, connects to Postgres, serves
-//! `POST /jobs`.
-
-mod api;
+//! rustyq-server entrypoint — boots axum, connects to Postgres, serves the
+//! HTTP API. The router itself lives in the library crate so tests can drive
+//! it without spinning up a TCP listener.
 
 use clap::Parser;
+use rustyq_server::router;
 use sqlx::postgres::PgPoolOptions;
 use std::net::SocketAddr;
 use tracing_subscriber::EnvFilter;
@@ -38,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
         .connect(&args.database_url)
         .await?;
 
-    let app = api::router(pool);
+    let app = router(pool);
 
     let listener = tokio::net::TcpListener::bind(&args.bind).await?;
     tracing::info!(addr = %args.bind, "rustyq-server listening");

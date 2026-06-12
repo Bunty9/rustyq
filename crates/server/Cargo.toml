@@ -6,6 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 description = "Axum HTTP server exposing rustyq enqueue/status endpoints."
 
+[lib]
+path = "src/lib.rs"
+
 [[bin]]
 name = "rustyq-server"
 path = "src/main.rs"
@@ -21,6 +24,12 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
 uuid = { workspace = true }
+chrono = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 clap = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+tower = { workspace = true }
+http-body-util = "0.1"

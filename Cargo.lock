@@ -1748,7 +1748,9 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "chrono",
  "clap",
+ "http-body-util",
  "rustyq-core",
  "serde",
  "serde_json",
