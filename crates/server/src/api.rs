@@ -7,6 +7,7 @@ use axum::{
     Json, Router,
 };
 use sqlx::PgPool;
+use tower_http::trace::TraceLayer;
 use uuid::Uuid;
 
 #[derive(serde::Deserialize)]
@@ -101,5 +102,6 @@ pub fn router(pool: PgPool) -> Router {
         .route("/jobs", post(enqueue))
         .route("/jobs/{id}", get(status))
         .route("/metrics", get(metrics_handler))
+        .layer(TraceLayer::new_for_http())
         .with_state(pool)
 }

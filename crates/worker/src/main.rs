@@ -5,11 +5,10 @@ mod handlers;
 
 use clap::Parser;
 use handlers::{FailOnce, Noop, Sleep};
-use rustyq_core::{Registry, Worker};
+use rustyq_core::{telemetry, Registry, Worker};
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
-use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 #[derive(Parser, Debug)]
@@ -34,10 +33,7 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
-        .json()
-        .init();
+    telemetry::init("rustyq-worker")?;
 
     let args = Args::parse();
 
@@ -77,6 +73,8 @@ async fn main() -> anyhow::Result<()> {
 
     let worker = Worker::new(pool, id, queues, args.concurrency, Arc::new(registry));
     worker.run(cancel).await?;
+
+    telemetry::shutdown();
     Ok(())
 }
 

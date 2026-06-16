@@ -3,10 +3,10 @@
 //! it without spinning up a TCP listener.
 
 use clap::Parser;
+use rustyq_core::telemetry;
 use rustyq_server::router;
 use sqlx::postgres::PgPoolOptions;
 use std::net::SocketAddr;
-use tracing_subscriber::EnvFilter;
 
 #[derive(Parser, Debug)]
 #[command(name = "rustyq-server", about = "rustyq HTTP server")]
@@ -26,10 +26,7 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")))
-        .json()
-        .init();
+    telemetry::init("rustyq-server")?;
 
     let args = Args::parse();
 
@@ -43,5 +40,7 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(&args.bind).await?;
     tracing::info!(addr = %args.bind, "rustyq-server listening");
     axum::serve(listener, app).await?;
+
+    telemetry::shutdown();
     Ok(())
 }
