@@ -63,7 +63,10 @@ async fn claim_batch_drains_up_to_n_rows() {
 
     // Asking again with nothing queued returns empty.
     let empty = worker.claim_batch(4).await.expect("claim_batch empty");
-    assert!(empty.is_empty(), "should return empty Vec when queue is drained");
+    assert!(
+        empty.is_empty(),
+        "should return empty Vec when queue is drained"
+    );
 }
 
 #[tokio::test]

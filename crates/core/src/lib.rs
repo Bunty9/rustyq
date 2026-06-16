@@ -17,6 +17,7 @@ use std::time::Instant;
 use tokio::sync::Semaphore;
 use tokio::time::{sleep, Duration};
 use tokio_util::sync::CancellationToken;
+use tracing::Instrument;
 use uuid::Uuid;
 
 /// Job lifecycle states. Matches the `state` column CHECK constraint in
@@ -129,51 +130,54 @@ impl Worker {
                     let pool = self.pool.clone();
                     let id = self.id.clone();
                     let registry = registry.clone();
-                    tokio::spawn(async move {
-                        let delay_ms = (claimed_at - job.created_at).num_milliseconds();
-                        let span = tracing::info_span!(
-                            "run_job",
-                            "job.id" = %job.id,
-                            "job.kind" = %job.kind,
-                            "job.queue" = %job.queue,
-                            "job.attempts" = job.attempts,
-                            "job.delay_secs" = delay_ms,
-                        );
-                        let _enter = span.enter();
+                    let delay_ms = (claimed_at - job.created_at).num_milliseconds();
+                    let span = tracing::info_span!(
+                        "run_job",
+                        "job.id" = %job.id,
+                        "job.kind" = %job.kind,
+                        "job.queue" = %job.queue,
+                        "job.attempts" = job.attempts,
+                        "job.delay_ms" = delay_ms,
+                    );
+                    tokio::spawn(
+                        async move {
+                            metrics::counter!(
+                                "rustyq_jobs_claimed_total",
+                                "queue" => job.queue.clone(),
+                                "worker" => id.clone()
+                            )
+                            .increment(1);
 
-                        metrics::counter!(
-                            "rustyq_jobs_claimed_total",
-                            "queue" => job.queue.clone(),
-                            "worker" => id.clone()
-                        )
-                        .increment(1);
+                            let latency_secs = delay_ms as f64 / 1000.0;
+                            metrics::histogram!(
+                                "rustyq_dispatch_latency_seconds",
+                                "queue" => job.queue.clone()
+                            )
+                            .record(latency_secs.max(0.0));
 
-                        let latency_secs = delay_ms as f64 / 1000.0;
-                        metrics::histogram!(
-                            "rustyq_dispatch_latency_seconds",
-                            "queue" => job.queue.clone()
-                        )
-                        .record(latency_secs.max(0.0));
+                            tracing::debug!("dispatching");
+                            let started = Instant::now();
+                            let result = registry.dispatch(&job).await;
+                            let run_secs = started.elapsed().as_secs_f64();
 
-                        tracing::debug!("dispatching");
-                        let started = Instant::now();
-                        let result = registry.dispatch(&job).await;
-                        let run_secs = started.elapsed().as_secs_f64();
+                            metrics::histogram!(
+                                "rustyq_job_run_duration_seconds",
+                                "queue" => job.queue.clone(),
+                                "kind"  => job.kind.clone()
+                            )
+                            .record(run_secs);
 
-                        metrics::histogram!(
-                            "rustyq_job_run_duration_seconds",
-                            "queue" => job.queue.clone(),
-                            "kind"  => job.kind.clone()
-                        )
-                        .record(run_secs);
-
-                        let final_result = finalize(&pool, &id, &job, result).await;
-                        match &final_result {
-                            Ok(state) => tracing::debug!(?state, "finalized"),
-                            Err(e) => tracing::error!(?e, job_id = %job.id, "finalize failed"),
+                            let final_result = finalize(&pool, &id, &job, result).await;
+                            match &final_result {
+                                Ok(state) => tracing::debug!(?state, "finalized"),
+                                Err(e) => {
+                                    tracing::error!(?e, job_id = %job.id, "finalize failed")
+                                }
+                            }
+                            drop(permit);
                         }
-                        drop(permit);
-                    });
+                        .instrument(span),
+                    );
                 }
                 // If we got fewer than asked, queue is drained — stop the
                 // greedy loop and go back to LISTEN/NOTIFY waiting.

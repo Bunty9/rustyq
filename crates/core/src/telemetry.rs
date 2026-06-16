@@ -22,17 +22,26 @@
 //! # Shutdown
 //!
 //! Call `shutdown()` before process exit so the SDK can flush any in-flight
-//! spans. This is a no-op when no OTLP exporter was installed.
+//! spans. The call is always safe; when no OTLP exporter was installed it
+//! just resets the global provider to a no-op, so any span emitted after
+//! `shutdown()` is silently dropped.
 
 use std::sync::OnceLock;
 
 use opentelemetry::KeyValue;
+use opentelemetry_sdk::trace::TracerProvider;
 use opentelemetry_sdk::Resource;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 /// Guards the global tracing subscriber so `init` is safe to call multiple
 /// times in the same process (important for integration-test binaries).
 static INIT: OnceLock<()> = OnceLock::new();
+
+/// Holds the OTLP `TracerProvider` so `shutdown()` can call `force_flush()`
+/// against the same instance — `opentelemetry::global` exposes a shutdown
+/// hook but no flush hook, so the SDK's BatchSpanProcessor would otherwise
+/// drop tail spans when the Tokio runtime is torn down on `main` return.
+static PROVIDER: OnceLock<TracerProvider> = OnceLock::new();
 
 /// Initialise the global tracing subscriber.
 ///
@@ -43,8 +52,8 @@ static INIT: OnceLock<()> = OnceLock::new();
 /// Safe to call more than once: subsequent calls are no-ops.
 pub fn init(service: &'static str) -> anyhow::Result<()> {
     INIT.get_or_init(|| {
-        let env_filter = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new("info"));
+        let env_filter =
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
         if std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT").is_ok() {
             match build_otlp_tracer(service) {
@@ -80,9 +89,17 @@ pub fn init(service: &'static str) -> anyhow::Result<()> {
 }
 
 /// Flush and shut down the global tracer provider. Should be called before
-/// process exit when an OTLP exporter was installed. Safe to call when no
-/// provider was installed — the SDK no-ops in that case.
+/// process exit when an OTLP exporter was installed; flushing first prevents
+/// the BatchSpanProcessor from losing tail spans when the Tokio runtime is
+/// dropped on `main` return. Safe to call when no provider was installed.
 pub fn shutdown() {
+    if let Some(provider) = PROVIDER.get() {
+        for result in provider.force_flush() {
+            if let Err(e) = result {
+                tracing::warn!(error = ?e, "OTLP force_flush returned an error");
+            }
+        }
+    }
     opentelemetry::global::shutdown_tracer_provider();
 }
 
@@ -109,6 +126,9 @@ fn build_otlp_tracer(service: &'static str) -> anyhow::Result<opentelemetry_sdk:
         .build();
 
     opentelemetry::global::set_tracer_provider(provider.clone());
+    // Keep a handle so shutdown() can force_flush the BatchSpanProcessor.
+    // OnceLock::set returns Err if already set — ignore (init is idempotent).
+    let _ = PROVIDER.set(provider.clone());
 
     Ok(provider.tracer(service))
 }

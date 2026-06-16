@@ -54,9 +54,7 @@ async fn fail_once_retries_to_done() {
     };
 
     let handler = FailOnce::new();
-    let registry = Registry::builder()
-        .register("fail_once", handler)
-        .build();
+    let registry = Registry::builder().register("fail_once", handler).build();
 
     // max_attempts=3 leaves room for retry. After claim, attempts becomes 1,
     // so finalize's backoff = 2^1 = 2s — fits within the 10s budget.
