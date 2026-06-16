@@ -25,16 +25,16 @@ async fn enqueue(
     Json(req): Json<EnqueueReq>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let id = Uuid::now_v7();
-    sqlx::query(
+    sqlx::query!(
         r#"INSERT INTO jobs (id, queue, kind, payload, state, priority, run_at)
            VALUES ($1, $2, $3, $4, 'queued', $5, now() + make_interval(secs => $6::int))"#,
+        id,
+        req.queue,
+        req.kind,
+        req.payload,
+        req.priority,
+        req.delay_secs as i32,
     )
-    .bind(id)
-    .bind(&req.queue)
-    .bind(&req.kind)
-    .bind(&req.payload)
-    .bind(req.priority)
-    .bind(req.delay_secs as i32)
     .execute(&pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
@@ -48,6 +48,8 @@ async fn enqueue(
     .increment(1);
 
     // Fire-and-forget — workers also fall back to a 1s poll.
+    // NOTIFY does not return rows or take parameters, so the plain
+    // `sqlx::query` call stays — no compile-time checking required.
     let _ = sqlx::query("NOTIFY rustyq_new").execute(&pool).await;
     Ok(Json(serde_json::json!({ "id": id })))
 }
@@ -72,11 +74,12 @@ async fn status(
     State(pool): State<PgPool>,
     Path(id): Path<Uuid>,
 ) -> Result<Json<JobStatus>, (StatusCode, String)> {
-    let row = sqlx::query_as::<_, JobStatus>(
-        "SELECT id, state, attempts, max_attempts, run_at, locked_by, last_error \
-         FROM jobs WHERE id = $1",
+    let row = sqlx::query_as!(
+        JobStatus,
+        r#"SELECT id, state, attempts, max_attempts, run_at, locked_by, last_error
+           FROM jobs WHERE id = $1"#,
+        id,
     )
-    .bind(id)
     .fetch_optional(&pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;

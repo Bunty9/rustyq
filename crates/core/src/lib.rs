@@ -183,7 +183,8 @@ impl Worker {
         if n == 0 {
             return Ok(Vec::new());
         }
-        let rows = sqlx::query_as::<_, Job>(
+        let rows = sqlx::query_as!(
+            Job,
             r#"
             UPDATE jobs SET state='running', locked_at=now(), locked_by=$1, attempts=attempts+1
             WHERE id IN (
@@ -193,12 +194,16 @@ impl Worker {
               FOR UPDATE SKIP LOCKED
               LIMIT $3
             )
-            RETURNING *
+            RETURNING
+              id, queue, kind,
+              payload as "payload: Json<serde_json::Value>",
+              state, priority, attempts, max_attempts,
+              run_at, locked_at, locked_by, last_error, created_at
             "#,
+            self.id,
+            &self.queues,
+            n as i64,
         )
-        .bind(&self.id)
-        .bind(&self.queues)
-        .bind(n as i64)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)
@@ -225,10 +230,12 @@ pub async fn finalize(
 ) -> sqlx::Result<Option<&'static str>> {
     match res {
         Ok(()) => {
-            sqlx::query("UPDATE jobs SET state='done', locked_at=NULL WHERE id=$1")
-                .bind(job.id)
-                .execute(pool)
-                .await?;
+            sqlx::query!(
+                "UPDATE jobs SET state='done', locked_at=NULL WHERE id=$1",
+                job.id,
+            )
+            .execute(pool)
+            .await?;
             metrics::counter!(
                 "rustyq_jobs_finished_total",
                 "state" => "done"
@@ -237,11 +244,11 @@ pub async fn finalize(
             Ok(Some("done"))
         }
         Err(e) if job.attempts >= job.max_attempts => {
-            sqlx::query(
+            sqlx::query!(
                 "UPDATE jobs SET state='dead', last_error=$2, locked_at=NULL WHERE id=$1",
+                job.id,
+                e.to_string(),
             )
-            .bind(job.id)
-            .bind(e.to_string())
             .execute(pool)
             .await?;
             metrics::counter!(
@@ -255,14 +262,14 @@ pub async fn finalize(
             // Exponential backoff: 2^attempts seconds, capped at 1 hour.
             let shift = job.attempts.min(12) as u32;
             let delay = (1u64 << shift).min(3600) as i32;
-            sqlx::query(
+            sqlx::query!(
                 "UPDATE jobs SET state='queued', last_error=$2, \
                  run_at = now() + make_interval(secs => $3::int), locked_at=NULL \
                  WHERE id=$1",
+                job.id,
+                e.to_string(),
+                delay,
             )
-            .bind(job.id)
-            .bind(e.to_string())
-            .bind(delay)
             .execute(pool)
             .await?;
             // Job requeued — not yet finished; caller may track separately if needed.

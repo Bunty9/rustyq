@@ -18,7 +18,8 @@ FROM chef AS builder
 # memory ceiling to comfortably under 2 GB. Runtime overhead is small for
 # this workload; revisit when the host build env is stable.
 ENV CARGO_PROFILE_RELEASE_LTO=false \
-    CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
+    CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
+    SQLX_OFFLINE=true
 COPY --from=planner /app/recipe.json recipe.json
 # Cook only the dependency graph — this layer is cached as long as Cargo.{toml,lock}
 # do not change.
