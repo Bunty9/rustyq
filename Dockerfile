@@ -11,6 +11,14 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 # ---- Stage 3: builder (cook deps, then build the actual workspace) ----------
 FROM chef AS builder
+# Disable LTO and split codegen across many units inside the container build.
+# `release` profile uses lto="fat" + codegen-units=1 (best runtime, worst
+# build memory) which has been killing Docker Desktop's build VM. These
+# env vars override the profile settings at compile time and lower the
+# memory ceiling to comfortably under 2 GB. Runtime overhead is small for
+# this workload; revisit when the host build env is stable.
+ENV CARGO_PROFILE_RELEASE_LTO=false \
+    CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
 COPY --from=planner /app/recipe.json recipe.json
 # Cook only the dependency graph — this layer is cached as long as Cargo.{toml,lock}
 # do not change.

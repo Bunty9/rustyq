@@ -23,7 +23,7 @@
 - [ ] `docker compose up` boots Postgres + server + 2 workers
 - [ ] `POST /jobs` returns 200 + UUID
 
-## Next sprint — Phase 2: real dispatch + observability
+## Sprint — Phase 2: real dispatch + observability
 
 - [x] `run_job` dispatches by `kind` to a registered async handler
       (`crates/core/src/handler.rs` — `Handler` trait + `Registry`)
@@ -33,11 +33,25 @@
       (`crates/core/tests/{dispatch,retry,dead}.rs` against
       `TEST_DATABASE_URL`)
 - [x] CI runs Postgres service container + serial nextest
-- [ ] Prometheus `/metrics` endpoint on the server (`metrics-exporter-prometheus`)
-- [ ] `tracing-opentelemetry` OTLP exporter behind a flag
+- [x] `GET /jobs/{id}` status endpoint with `JobStatus` JSON shape
+      (`crates/server/src/api.rs`) + 2 TDD tests
+- [x] Prometheus `/metrics` endpoint on the server
+      (`crates/server/src/metrics.rs` — `OnceLock` recorder, four
+      `rustyq_*` series with HELP descriptions) + 2 TDD tests
+- [x] `Worker::claim_batch(n)` — single `UPDATE…RETURNING LIMIT n` per
+      drain cycle (`crates/core/src/lib.rs`) + 2 TDD tests
+- [x] Local throughput benchmark harness (`bench/local/throughput.sh`)
+- [ ] `tracing-opentelemetry` OTLP exporter behind a flag (Phase 3)
 - [ ] Switch back to `sqlx::query!` macros + `sqlx prepare` in CI
-- [ ] `GET /jobs/{id}` status endpoint
-- [ ] Criterion bench harness in `crates/core/benches/`
+      (Phase 3)
+- [ ] Criterion bench harness in `crates/core/benches/` (Phase 4 —
+      replaces the curl-based local script with an in-process Rust
+      load generator so the HTTP/curl ceiling is not the headline.)
+- [ ] Worker drain loop: stop breaking out of the inner batch loop when
+      `sem.available_permits() == 0` — wait on `acquire_owned().await`
+      instead so the worker stays pegged when there is more work in
+      the queue. Currently the worker idles 1 s between bulk-INSERT
+      bursts unless a fresh `NOTIFY` arrives (Phase 4).
 - [ ] Scope `rustyq_new` LISTEN/NOTIFY channel per database/schema so
       tests can run in parallel without cross-talk (current workaround:
       `--test-threads=1`).
@@ -52,13 +66,20 @@
 
 ## Bench numbers (targets per `projects-l3-l4.md` § P1; updated weekly)
 
-| metric                                              | target          | current | as-of      |
-|-----------------------------------------------------|-----------------|---------|------------|
-| Throughput (drain rate, 4 vCPU, 100k enqueued)      | >= 5,000 jobs/s |         |            |
-| p99 enqueue -> first worker pickup                  | < 50 ms         |         |            |
-| Chaos: kill -9 2 of 4 workers, jobs lost            | 0               |         |            |
-| Memory per in-flight job                            | < 2 MB          |         |            |
-| Throughput vs Celery (same Postgres + hardware)     | >= 3-5x         |         |            |
+| metric                                              | target          | current        | as-of      |
+|-----------------------------------------------------|-----------------|----------------|------------|
+| Throughput (drain rate, 4 vCPU, 100k enqueued)      | >= 5,000 jobs/s | 1,100 jobs/s\* | 2026-06-16 |
+| p99 enqueue -> first worker pickup                  | < 50 ms         | TBD            |            |
+| Chaos: kill -9 2 of 4 workers, jobs lost            | 0               | TBD            |            |
+| Memory per in-flight job                            | < 2 MB          | TBD            |            |
+| Throughput vs Celery (same Postgres + hardware)     | >= 3-5x         | TBD            |            |
+
+\* Current baseline is HTTP-driven (`bench/local/throughput.sh`, curl-based
+load). End-to-end rate matches the curl POST ceiling (~1,100 POST/s on
+localhost, 32-way xargs), not the worker's drain capacity. Phase 4 will
+replace this with a Criterion harness that drives enqueue through the Rust
+client and tunes the worker `Worker::run` greedy-batch loop; the 5 k/s
+target is for that setup.
 
 ## Blog topics surfacing
 
