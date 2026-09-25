@@ -63,7 +63,7 @@ replacement.
 | CI                  | GitHub Actions (stable + beta) + `cargo-deny` + `cargo-nextest`     |
 
 Full pinned versions live in [`Cargo.toml`](./Cargo.toml). Schema:
-[`migrations/0001_init.sql`](./migrations/0001_init.sql).
+[`migrations/`](./migrations/).
 
 ## Quick start (docker-compose)
 
@@ -89,10 +89,16 @@ maturin develop --release   # builds the wheel into your venv
 
 ```python
 import rustyq
-client = rustyq.Client("http://localhost:8080")
-job_id = client.enqueue("default", "send_email", '{"to": "a@b"}')
-print(job_id)
+
+client = rustyq.Client("http://localhost:8080", timeout_secs=10.0)
+job_id = client.enqueue("default", "send_email", {"to": "a@b"}, priority=0, delay_secs=0)
+print(client.status(job_id))  # -> {"id": ..., "state": "queued", "attempts": 0, ...}
 ```
+
+`payload` is any JSON-serialisable Python object (dict/list/str/number/None) —
+it is serialised with `json.dumps`, not passed through as a JSON string.
+Non-2xx responses raise `RuntimeError`; `status()` of an unknown job id raises
+`KeyError`.
 
 ## Bench targets
 
@@ -121,7 +127,7 @@ rustyq/
     worker/                 # worker daemon (boots Worker, Ctrl-C cancels)
     pybind/                 # PyO3 client + pyproject.toml (maturin)
     client/                 # async Rust client (reqwest)
-  migrations/0001_init.sql  # jobs table + dispatch indexes
+  migrations/               # jobs table + dispatch indexes (sqlx migrate)
   Dockerfile                # cargo-chef multi-stage, distroless final
   docker-compose.yml        # postgres + server + 2 workers
   fly.toml                  # Fly.io app, region sin, Neon-attached
