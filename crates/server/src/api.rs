@@ -25,10 +25,29 @@ async fn enqueue(
     State(pool): State<PgPool>,
     Json(req): Json<EnqueueReq>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if req.queue.trim().is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "queue must not be empty".into()));
+    }
+    if req.kind.trim().is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "kind must not be empty".into()));
+    }
+    if req.delay_secs < 0 || req.delay_secs > i32::MAX as i64 {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "delay_secs must be between 0 and i32::MAX".into(),
+        ));
+    }
+
     let id = Uuid::now_v7();
+    // INSERT and NOTIFY in one statement: one round trip, and the
+    // notification is delivered at commit, so a woken worker always sees the
+    // row. Workers also fall back to a 1s poll.
     sqlx::query!(
-        r#"INSERT INTO jobs (id, queue, kind, payload, state, priority, run_at)
-           VALUES ($1, $2, $3, $4, 'queued', $5, now() + make_interval(secs => $6::int))"#,
+        r#"WITH ins AS (
+             INSERT INTO jobs (id, queue, kind, payload, state, priority, run_at)
+             VALUES ($1, $2, $3, $4, 'queued', $5, now() + make_interval(secs => $6::int))
+           )
+           SELECT pg_notify('rustyq_new', '')::text AS "notified""#,
         id,
         req.queue,
         req.kind,
@@ -36,7 +55,7 @@ async fn enqueue(
         req.priority,
         req.delay_secs as i32,
     )
-    .execute(&pool)
+    .fetch_one(&pool)
     .await
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
@@ -48,10 +67,6 @@ async fn enqueue(
     )
     .increment(1);
 
-    // Fire-and-forget — workers also fall back to a 1s poll.
-    // NOTIFY does not return rows or take parameters, so the plain
-    // `sqlx::query` call stays — no compile-time checking required.
-    let _ = sqlx::query("NOTIFY rustyq_new").execute(&pool).await;
     Ok(Json(serde_json::json!({ "id": id })))
 }
 
@@ -88,6 +103,13 @@ async fn status(
         .ok_or((StatusCode::NOT_FOUND, "no such job".to_string()))
 }
 
+async fn healthz(State(pool): State<PgPool>) -> (StatusCode, String) {
+    match sqlx::query("SELECT 1").execute(&pool).await {
+        Ok(_) => (StatusCode::OK, "ok".to_string()),
+        Err(e) => (StatusCode::SERVICE_UNAVAILABLE, e.to_string()),
+    }
+}
+
 async fn metrics_handler() -> (StatusCode, [(header::HeaderName, &'static str); 1], String) {
     let body = crate::metrics::handle().render();
     (
@@ -101,6 +123,7 @@ pub fn router(pool: PgPool) -> Router {
     Router::new()
         .route("/jobs", post(enqueue))
         .route("/jobs/{id}", get(status))
+        .route("/healthz", get(healthz))
         .route("/metrics", get(metrics_handler))
         .layer(TraceLayer::new_for_http())
         .with_state(pool)

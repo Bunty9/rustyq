@@ -8,6 +8,7 @@ use handlers::{FailOnce, Noop, Sleep};
 use rustyq_core::{telemetry, Registry, Worker};
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -29,6 +30,11 @@ struct Args {
     /// Worker identity written to `locked_by`. Defaults to `host:uuid`.
     #[arg(long, env = "RUSTYQ_WORKER_ID")]
     id: Option<String>,
+
+    /// Seconds a `running` lock may age before its job is presumed
+    /// abandoned (worker died) and reaped back to `queued`/`dead`.
+    #[arg(long, env = "RUSTYQ_LOCK_TIMEOUT_SECS", default_value_t = 300)]
+    lock_timeout_secs: u64,
 }
 
 #[tokio::main]
@@ -59,7 +65,7 @@ async fn main() -> anyhow::Result<()> {
     let registry = Registry::builder()
         .register("noop", Noop)
         .register("sleep", Sleep)
-        .register("fail_once", FailOnce::new())
+        .register("fail_once", FailOnce)
         .build();
 
     let cancel = CancellationToken::new();
@@ -70,8 +76,25 @@ async fn main() -> anyhow::Result<()> {
             cancel_for_signal.cancel();
         }
     });
+    // Docker/Fly send SIGTERM on stop/redeploy, not Ctrl-C — without this,
+    // the process would be killed outright, leaving in-flight jobs stuck in
+    // `running`.
+    #[cfg(unix)]
+    {
+        let cancel_for_sigterm = cancel.clone();
+        tokio::spawn(async move {
+            if let Ok(mut sigterm) =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            {
+                sigterm.recv().await;
+                tracing::info!("SIGTERM received, cancelling");
+                cancel_for_sigterm.cancel();
+            }
+        });
+    }
 
-    let worker = Worker::new(pool, id, queues, args.concurrency, Arc::new(registry));
+    let mut worker = Worker::new(pool, id, queues, args.concurrency, Arc::new(registry));
+    worker.lock_timeout = Duration::from_secs(args.lock_timeout_secs);
     worker.run(cancel).await?;
 
     telemetry::shutdown();

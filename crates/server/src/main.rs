@@ -22,6 +22,12 @@ struct Args {
     /// Maximum Postgres pool connections.
     #[arg(long, env = "RUSTYQ_PG_MAX", default_value_t = 16)]
     pg_max: u32,
+
+    /// Run pending migrations against `--database-url` before serving.
+    /// Opt-in: only the server process should migrate against a shared
+    /// database, never every process in a fly.io/compose deployment.
+    #[arg(long, env = "RUSTYQ_MIGRATE", default_value_t = false)]
+    migrate: bool,
 }
 
 #[tokio::main]
@@ -35,12 +41,44 @@ async fn main() -> anyhow::Result<()> {
         .connect(&args.database_url)
         .await?;
 
+    if args.migrate {
+        tracing::info!("running pending migrations");
+        sqlx::migrate!("../../migrations").run(&pool).await?;
+    }
+
     let app = router(pool);
 
     let listener = tokio::net::TcpListener::bind(&args.bind).await?;
     tracing::info!(addr = %args.bind, "rustyq-server listening");
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
 
     telemetry::shutdown();
     Ok(())
+}
+
+/// Resolves on Ctrl-C or, on unix, SIGTERM — whichever comes first.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("install Ctrl-C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("install SIGTERM handler")
+            .recv()
+            .await;
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+    tracing::info!("shutdown signal received");
 }

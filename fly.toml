@@ -9,13 +9,13 @@
 app = "rustyq"
 primary_region = "sin"
 kill_signal = "SIGINT"
-kill_timeout = "30s"
+kill_timeout = "40s"  # > worker shutdown_grace (30s) so in-flight jobs can finish
 
 [build]
   dockerfile = "Dockerfile"
 
 [processes]
-  server = "/usr/local/bin/rustyq-server"
+  server = "/usr/local/bin/rustyq-server --migrate"
   worker = "/usr/local/bin/rustyq-worker"
 
 [env]
@@ -31,6 +31,13 @@ kill_timeout = "30s"
   auto_start_machines = true
   min_machines_running = 1
   processes = ["server"]
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/healthz"
 
 [[vm]]
   size = "shared-cpu-1x"

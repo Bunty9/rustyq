@@ -1,4 +1,4 @@
-CREATE TABLE jobs (
+CREATE TABLE IF NOT EXISTS jobs (
   id            UUID PRIMARY KEY,
   queue         TEXT NOT NULL,
   kind          TEXT NOT NULL,
@@ -13,6 +13,6 @@ CREATE TABLE jobs (
   last_error    TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_jobs_dispatch ON jobs (queue, state, priority DESC, run_at)
+CREATE INDEX IF NOT EXISTS idx_jobs_dispatch ON jobs (queue, state, priority DESC, run_at)
   WHERE state = 'queued';
-CREATE INDEX idx_jobs_locked   ON jobs (locked_by, state) WHERE state = 'running';
+CREATE INDEX IF NOT EXISTS idx_jobs_locked   ON jobs (locked_by, state) WHERE state = 'running';

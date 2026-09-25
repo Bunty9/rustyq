@@ -35,7 +35,9 @@ FROM gcr.io/distroless/cc-debian12 AS runtime
 WORKDIR /app
 COPY --from=builder /app/target/release/rustyq-server /usr/local/bin/rustyq-server
 COPY --from=builder /app/target/release/rustyq-worker /usr/local/bin/rustyq-worker
-# Default to the server. Override CMD in compose / fly.toml for workers.
+# Default to the server. CMD, not ENTRYPOINT: fly.toml [processes] replace
+# CMD, so an ENTRYPOINT would turn the worker process into
+# `rustyq-server /usr/local/bin/rustyq-worker`.
 USER nonroot:nonroot
 EXPOSE 8080
-ENTRYPOINT ["/usr/local/bin/rustyq-server"]
+CMD ["/usr/local/bin/rustyq-server"]

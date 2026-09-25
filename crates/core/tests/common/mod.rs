@@ -51,9 +51,12 @@ pub async fn setup_pool() -> Option<PgPool> {
         .execute(&pool)
         .await
         .expect("create schema");
-    sqlx::raw_sql(include_str!("../../../../migrations/0001_init.sql"))
-        .execute(&pool)
-        .await
-        .expect("migration");
+    sqlx::raw_sql(concat!(
+        include_str!("../../../../migrations/0001_init.sql"),
+        include_str!("../../../../migrations/0002_dispatch_index.sql"),
+    ))
+    .execute(&pool)
+    .await
+    .expect("migration");
     Some(pool)
 }

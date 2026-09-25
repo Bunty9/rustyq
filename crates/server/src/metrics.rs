@@ -46,6 +46,10 @@ pub fn handle() -> PrometheusHandle {
                 "Total number of jobs that reached a terminal state (done, dead). \
                  Jobs requeued after a transient failure do not increment this counter."
             );
+            metrics::describe_counter!(
+                "rustyq_jobs_reaped_total",
+                "Total number of jobs reclaimed from workers presumed dead (stale lock)."
+            );
             metrics::describe_histogram!(
                 "rustyq_dispatch_latency_seconds",
                 "Time between job creation and when the worker claimed it, in seconds."
