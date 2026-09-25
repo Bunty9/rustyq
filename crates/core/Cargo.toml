@@ -30,3 +30,7 @@ metrics = { workspace = true }
 [dev-dependencies]
 tokio = { workspace = true }
 anyhow = { workspace = true }
+
+[[bench]]
+name = "drain"
+harness = false

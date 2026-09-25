@@ -84,7 +84,7 @@ jobs:
           tool: sqlx-cli
       - name: apply schema
         run: |
-          psql "$DATABASE_URL" -f migrations/0001_init.sql
+          for f in migrations/*.sql; do psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"; done
       - name: cargo sqlx prepare --check
         run: cargo sqlx prepare --workspace --check -- --tests
 
@@ -102,13 +102,35 @@ jobs:
         run: cargo deny check
 
   bench:
-    name: criterion (non-blocking)
+    name: drain bench smoke (non-blocking)
     runs-on: ubuntu-latest
     continue-on-error: true
     needs: test
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=2s
+          --health-timeout=3s
+          --health-retries=20
+    env:
+      SQLX_OFFLINE: "true"
+      BENCH_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+      BENCH_JOBS: "10000"
+      BENCH_LATENCY_JOBS: "500"
+      # Deliberately low floor: shared runners are noisy. It catches order-of-
+      # magnitude regressions (e.g. the claim query losing its index), not
+      # small drifts — compare full runs by hand.
+      BENCH_MIN_JOBS_PER_SEC: "300"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: cargo bench --no-run
-        run: cargo bench --workspace --no-run
+      - name: cargo bench (drain + dispatch latency)
+        run: cargo bench -p rustyq-core --bench drain
