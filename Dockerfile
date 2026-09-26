@@ -1,7 +1,10 @@
 # syntax=docker/dockerfile:1.7
 
 # ---- Stage 1: chef base (cargo-chef for layer-cacheable builds) -------------
-FROM lukemathwalker/cargo-chef:latest-rust-1 AS chef
+# Builder and runtime must share a Debian release: the binaries link the
+# builder's glibc. Unpinned `latest-rust-1` moved to trixie (glibc 2.41) and
+# broke the old debian12 runtime (`GLIBC_2.38 not found`).
+FROM lukemathwalker/cargo-chef:latest-rust-1-trixie AS chef
 WORKDIR /app
 
 # ---- Stage 2: planner (compute the recipe of dependencies) ------------------
@@ -31,7 +34,7 @@ RUN cargo build --release \
     --bin rustyq-worker
 
 # ---- Stage 4: distroless runtime --------------------------------------------
-FROM gcr.io/distroless/cc-debian12 AS runtime
+FROM gcr.io/distroless/cc-debian13 AS runtime
 WORKDIR /app
 COPY --from=builder /app/target/release/rustyq-server /usr/local/bin/rustyq-server
 COPY --from=builder /app/target/release/rustyq-worker /usr/local/bin/rustyq-worker

@@ -10,7 +10,7 @@ services:
     # `docker compose exec postgres psql ...` for ad-hoc queries.
     volumes:
       - rustyq_pg_data:/var/lib/postgresql/data
-      - ./migrations/0001_init.sql:/docker-entrypoint-initdb.d/0001_init.sql:ro
+      - ./migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U rustyq -d rustyq"]
       interval: 2s
@@ -27,40 +27,43 @@ services:
     environment:
       DATABASE_URL: postgres://rustyq:rustyq@postgres:5432/rustyq
       RUSTYQ_BIND: 0.0.0.0:8080
+      RUSTYQ_MIGRATE: "true"
       RUST_LOG: info
+      # No value: passed through only when set in the host env (see jaeger).
+      OTEL_EXPORTER_OTLP_ENDPOINT:
     ports:
-      - "8080:8080"
+      - "${RUSTYQ_HTTP_PORT:-8080}:8080"
     entrypoint: ["/usr/local/bin/rustyq-server"]
 
-  rustyq-worker-1:
+  # One scalable service instead of fixed worker-1/worker-2: each replica's
+  # id defaults to `$HOSTNAME:<uuid>`, so `--scale rustyq-worker=N` just works
+  # (scripts/chaos.sh relies on this).
+  rustyq-worker:
     build:
       context: .
       dockerfile: Dockerfile
     depends_on:
       postgres:
         condition: service_healthy
+    deploy:
+      replicas: 2
     environment:
       DATABASE_URL: postgres://rustyq:rustyq@postgres:5432/rustyq
       RUSTYQ_QUEUES: default
-      RUSTYQ_CONCURRENCY: "8"
-      RUSTYQ_WORKER_ID: worker-1
+      RUSTYQ_CONCURRENCY: ${RUSTYQ_CONCURRENCY:-8}
+      RUSTYQ_LOCK_TIMEOUT_SECS: ${RUSTYQ_LOCK_TIMEOUT_SECS:-300}
       RUST_LOG: info
+      OTEL_EXPORTER_OTLP_ENDPOINT:
     entrypoint: ["/usr/local/bin/rustyq-worker"]
 
-  rustyq-worker-2:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      DATABASE_URL: postgres://rustyq:rustyq@postgres:5432/rustyq
-      RUSTYQ_QUEUES: default
-      RUSTYQ_CONCURRENCY: "8"
-      RUSTYQ_WORKER_ID: worker-2
-      RUST_LOG: info
-    entrypoint: ["/usr/local/bin/rustyq-worker"]
+  # Trace viewer, opt-in:
+  #   OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317 docker compose --profile otel up
+  # then open http://localhost:16686 (services rustyq-server / rustyq-worker).
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    profiles: ["otel"]
+    ports:
+      - "16686:16686"
 
 volumes:
   rustyq_pg_data:

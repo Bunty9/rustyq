@@ -1,0 +1,32 @@
+name: rustyq-celery-bench
+
+services:
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 3s
+      retries: 10
+
+  worker:
+    build: .
+    command: celery -A tasks worker --concurrency=16 --pool=prefork --loglevel=warning
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      BROKER_URL: redis://redis:6379/0
+      COUNTER_URL: redis://redis:6379/1
+    deploy:
+      replicas: 0
+
+  tools:
+    build: .
+    command: sleep infinity
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      BROKER_URL: redis://redis:6379/0
+      COUNTER_URL: redis://redis:6379/1
