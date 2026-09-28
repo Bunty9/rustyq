@@ -14,7 +14,7 @@ name = "rustyq-server"
 path = "src/main.rs"
 
 [dependencies]
-rustyq-core = { path = "../core" }
+rustyq-core = { path = "../core", version = "0.1.0" }
 tokio = { workspace = true }
 axum = { workspace = true }
 tower = { workspace = true }

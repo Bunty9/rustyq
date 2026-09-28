@@ -41,7 +41,7 @@ impl Client {
         priority: i16,
         delay_secs: i64,
     ) -> PyResult<String> {
-        let json = py.import_bound("json")?;
+        let json = py.import("json")?;
         let payload = payload.unwrap_or_else(|| py.None().into_bound(py));
         let payload_str: String = json.call_method1("dumps", (payload,))?.extract()?;
         let parsed: serde_json::Value = serde_json::from_str(&payload_str)
@@ -56,7 +56,7 @@ impl Client {
 
         let base_url = self.base_url.clone();
         let client = self.client.clone();
-        let text = py.allow_threads(move || -> PyResult<String> {
+        let text = py.detach(move || -> PyResult<String> {
             let resp = client
                 .post(format!("{base_url}/jobs"))
                 .json(&body)
@@ -83,11 +83,11 @@ impl Client {
     }
 
     /// Fetch job status as a dict. Raises `KeyError` if the job id is unknown.
-    fn status(&self, py: Python<'_>, job_id: &str) -> PyResult<PyObject> {
+    fn status<'py>(&self, py: Python<'py>, job_id: &str) -> PyResult<Bound<'py, PyAny>> {
         let base_url = self.base_url.clone();
         let client = self.client.clone();
         let job_id_owned = job_id.to_string();
-        let (status, text) = py.allow_threads(move || -> PyResult<(u16, String)> {
+        let (status, text) = py.detach(move || -> PyResult<(u16, String)> {
             let resp = client
                 .get(format!("{base_url}/jobs/{job_id_owned}"))
                 .send()
@@ -108,9 +108,9 @@ impl Client {
             )));
         }
 
-        let json = py.import_bound("json")?;
+        let json = py.import("json")?;
         let obj = json.call_method1("loads", (text,))?;
-        Ok(obj.into())
+        Ok(obj)
     }
 }
 

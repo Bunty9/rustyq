@@ -29,6 +29,8 @@ allow = [
     "MPL-2.0",
     "CC0-1.0",
     "OpenSSL",
+    # webpki-roots ships the Mozilla CA bundle under this permissive data licence.
+    "CDLA-Permissive-2.0",
 ]
 
 [sources]

@@ -37,19 +37,11 @@ async fn metrics_endpoint_returns_200() {
 
     let resp = app.oneshot(req).await.expect("oneshot");
     assert_eq!(resp.status(), StatusCode::OK);
-
-    let body = resp
-        .into_body()
-        .collect()
-        .await
-        .expect("collect body")
-        .to_bytes();
-    let text = std::str::from_utf8(&body).expect("utf8");
-
-    assert!(
-        text.contains("# HELP rustyq"),
-        "expected '# HELP rustyq' in metrics body, got:\n{text}"
-    );
+    // The body may be empty here: the exporter only renders series (and
+    // their HELP lines) once something was recorded, and under nextest this
+    // test runs in its own process. `enqueue_increments_counter` covers the
+    // body.
+    assert_eq!(resp.headers()["content-type"], "text/plain; version=0.0.4");
 }
 
 #[tokio::test]
@@ -98,6 +90,10 @@ async fn enqueue_increments_counter() {
         .to_bytes();
     let text = std::str::from_utf8(&body).expect("utf8");
 
+    assert!(
+        text.contains("# HELP rustyq_jobs_enqueued_total"),
+        "expected HELP line in metrics body, got:\n{text}"
+    );
     assert!(
         text.contains("rustyq_jobs_enqueued_total"),
         "expected 'rustyq_jobs_enqueued_total' in metrics body, got:\n{text}"

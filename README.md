@@ -124,7 +124,7 @@ caps, idempotency keys, cron/recurring scheduling, auth on the HTTP API.
 | Postgres            | `sqlx` 0.8                                                          |
 | Cancellation        | `tokio-util` `CancellationToken`                                    |
 | IDs                 | `uuid` v7 (sortable)                                                |
-| Python bindings     | `pyo3` 0.22 + `maturin`                                             |
+| Python bindings     | `pyo3` 0.29 + `maturin`                                             |
 | Observability       | `tracing` + `tracing-opentelemetry` + `metrics-exporter-prometheus` |
 | CLI                 | `clap` 4                                                            |
 | Container build     | `cargo-chef` multi-stage, distroless final                          |

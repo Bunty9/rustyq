@@ -155,7 +155,7 @@
       a dict/list/str/number/None payload (serialised via Python's own
       `json.dumps`, not passed through as a string), `status()`; non-2xx
       responses raise `RuntimeError`, unknown job id raises `KeyError`;
-      HTTP calls run under `py.allow_threads` so the GIL is released.
+      HTTP calls run under `py.detach` (PyO3 0.29) so the GIL is released.
 - [x] `examples/python/celery_drop_in.py` — before/after Celery → rustyq
       call-site snippet.
 - [x] `examples/python/test_client.py` — live pytest suite against a
