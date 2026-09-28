@@ -132,8 +132,13 @@ against Celery's roughly 340 MiB per worker in every run (35–150x), because
 the gap comes from an architectural fact (one async Rust process versus 16 forked CPython
 interpreters), not from noise.
 
-The honest summary of this round of benchmarking is that the throughput
-story needs a re-run on quiet hardware before I'd put a number on a slide,
+The first quiet-hardware hint came from CI: the same drain bench on a
+GitHub-hosted 4-vCPU runner with a native Postgres did 4,900 jobs/s and a
+p99 enqueue-to-pickup of 4.3 ms, against 798 jobs/s and hundreds of
+milliseconds on my loaded laptop. One run on shared CI isn't a benchmark,
+but it says where the laptop numbers went. The honest summary is that the
+Celery throughput comparison still needs a controlled re-run before I'd put
+a ratio on a slide,
 and the zero-loss chaos result has passed once so far (five back-to-back
 runs are still to do). The memory gap is real and measured, and both can be
 re-run with the scripts in this repository.

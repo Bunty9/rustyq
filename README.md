@@ -277,8 +277,8 @@ difference for rustyq and was worth ~20% in run 3.
 
 | Bench target (from the original design)       | Status                                    |
 | ------------------------------------------------ | -------------------------------------------- |
-| >= 5,000 jobs/s drain, 4 vCPU                    | Not met on this host (best: 1,579 jobs/s); re-run on quiet hardware |
-| p99 enqueue -> pickup < 50 ms                    | Not met on this host (188–917 ms); re-run on quiet hardware |
+| >= 5,000 jobs/s drain, 4 vCPU                    | Nearly: 4,900 jobs/s on a GitHub-hosted 4-vCPU runner (10k jobs, 4x16, CI bench job, 2026-09-28); 1,579 best on the loaded dev host |
+| p99 enqueue -> pickup < 50 ms                    | Met on the CI runner: p50 1.6 ms, p99 4.3 ms, p99.9 9.3 ms; 188–917 ms on the loaded dev host |
 | Memory / in-flight job < 2 MB                    | Met (2.3–9.4 MiB **per worker process**, not per job) |
 | vs. Celery: 3–5x throughput, much lower memory   | Throughput inconclusive on this host (runs ranged from Celery 2.8x faster to rustyq 4.1x faster); ~35–150x less memory — met on memory only |
 

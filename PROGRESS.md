@@ -197,7 +197,9 @@ commands: `docs/specs/2026-09-26-rustyq-bench-writeup.md`.
 |------------------------------------------------------------------|-----------------|--------------------|------------|
 | Drain throughput, 20k jobs, 4 workers × 16 concurrency           | >= 5,000 jobs/s | 798 jobs/s         | 2026-09-26 |
 | Drain throughput, 4 workers × 64 concurrency                     | >= 5,000 jobs/s | 1,579 jobs/s       | 2026-09-26 |
-| p99 enqueue -> first worker pickup (trickle, idle workers)       | < 50 ms         | 188–917 ms         | 2026-09-26 |
+| Drain throughput, GitHub 4-vCPU runner, 10k jobs, 4×16 (CI)      | >= 5,000 jobs/s | 4,900 jobs/s       | 2026-09-28 |
+| p99 enqueue -> first worker pickup (trickle, idle workers)       | < 50 ms         | 188–917 ms (dev host) | 2026-09-26 |
+| p99 enqueue -> pickup, GitHub 4-vCPU runner (CI)                 | < 50 ms         | 4.3 ms (p50 1.6, p99.9 9.3) | 2026-09-28 |
 | Chaos: SIGKILL 2 of 4 workers mid-drain, jobs lost               | 0               | 0 (20,000/20,000 done, 0 dead, 59 re-run) | 2026-09-26 |
 | Memory, rustyq worker container (in-Docker Celery comparison)   | < 2 MB/job      | 2.3–9.4 MiB **per worker process** | 2026-09-26 |
 | Throughput vs Celery (same Docker VM, 20k jobs, 4×16)            | >= 3-5x         | inconclusive: 3 runs, Celery 168–1,104 vs rustyq 386–694 jobs/s (host noise) | 2026-09-28 |

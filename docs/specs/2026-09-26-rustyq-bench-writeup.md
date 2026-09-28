@@ -196,6 +196,25 @@ BENCH_DATABASE_URL=$TEST_DATABASE_URL BENCH_JOBS=0 BENCH_WORKERS=4 \
 (`BENCH_JOBS=0` skips the drain phase and goes straight to latency
 measurement; the bench binary supports this via `env_or`.)
 
+## 4b. Quiet-hardware data point: the CI runner
+
+The CI `bench` job runs the same `crates/core/benches/drain.rs` on a
+GitHub-hosted `ubuntu-latest` runner (4 vCPU) against a native Postgres 16
+service container, with `BENCH_JOBS=10000`, 4 workers x 16 concurrency.
+Run 36383734551 (commit 316def3, 2026-09-28):
+
+```
+drain: 10000 jobs, 4 workers x 16 concurrency: 2.04s = 4900 jobs/s
+latency (enqueue -> handler start, 500 jobs): p50 1.6ms  p99 4.3ms  p99.9 9.3ms  max 9.3ms
+```
+
+Same code, same settings as the 798 jobs/s / p99 188–917 ms dev-host runs:
+the ~6x throughput and ~40–200x p99 gap is the dev host (shared CPU,
+Postgres inside a Docker Desktop VM), not rustyq. On a quiet 4-vCPU box
+the p99 < 50 ms target is met with a wide margin and the drain is within
+2% of the 5,000 jobs/s target at 16 concurrency per worker (untested at
+4x64 on the runner). One run on shared CI hardware; repeat before quoting.
+
 ## 5. rustyq vs. Celery, in-Docker comparison
 
 ### Setup
