@@ -1,6 +1,11 @@
 services:
   postgres:
     image: postgres:16-alpine
+    # Benchmark knob only. PG_SYNCHRONOUS_COMMIT=off lets a Postgres crash
+    # lose the last few commits: lost worker transitions just re-run jobs,
+    # but a lost enqueue commit loses an already-acknowledged job. Matches
+    # the durability of Redis-brokered Celery for like-for-like comparison.
+    command: ["postgres", "-c", "synchronous_commit=${PG_SYNCHRONOUS_COMMIT:-on}"]
     environment:
       POSTGRES_USER: rustyq
       POSTGRES_PASSWORD: rustyq
