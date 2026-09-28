@@ -35,6 +35,12 @@ struct Args {
     /// abandoned (worker died) and reaped back to `queued`/`dead`.
     #[arg(long, env = "RUSTYQ_LOCK_TIMEOUT_SECS", default_value_t = 300)]
     lock_timeout_secs: u64,
+
+    /// Address for this worker's Prometheus `/metrics` listener (claimed,
+    /// finished, reaped counters; dispatch-latency and run-duration
+    /// histograms — they are recorded here, not in the server).
+    #[arg(long, env = "RUSTYQ_METRICS_BIND", default_value = "0.0.0.0:9091")]
+    metrics_bind: std::net::SocketAddr,
 }
 
 #[tokio::main]
@@ -42,6 +48,11 @@ async fn main() -> anyhow::Result<()> {
     telemetry::init("rustyq-worker")?;
 
     let args = Args::parse();
+
+    metrics_exporter_prometheus::PrometheusBuilder::new()
+        .with_http_listener(args.metrics_bind)
+        .set_buckets(&[0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 10.0])?
+        .install()?;
 
     let pool = PgPoolOptions::new()
         .max_connections((args.concurrency as u32).max(4) + 2)
