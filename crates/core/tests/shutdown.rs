@@ -29,7 +29,7 @@ async fn cancel_waits_for_in_flight_job_to_finish() {
 
     let job_id = Uuid::now_v7();
     sqlx::query(
-        "INSERT INTO jobs (id, queue, kind, payload, state) \
+        "INSERT INTO rustyq_jobs (id, queue, kind, payload, state) \
          VALUES ($1, 'default', 'shutdown_sleep', '{}', 'queued')",
     )
     .bind(job_id)
@@ -56,7 +56,7 @@ async fn cancel_waits_for_in_flight_job_to_finish() {
     // Wait until the job is picked up and running before cancelling.
     timeout(Duration::from_secs(5), async {
         loop {
-            let state: String = sqlx::query("SELECT state FROM jobs WHERE id=$1")
+            let state: String = sqlx::query("SELECT state FROM rustyq_jobs WHERE id=$1")
                 .bind(job_id)
                 .fetch_one(&pool)
                 .await
@@ -79,7 +79,7 @@ async fn cancel_waits_for_in_flight_job_to_finish() {
         .expect("worker run() must return within 5s of cancel")
         .expect("worker join");
 
-    let state: String = sqlx::query("SELECT state FROM jobs WHERE id=$1")
+    let state: String = sqlx::query("SELECT state FROM rustyq_jobs WHERE id=$1")
         .bind(job_id)
         .fetch_one(&pool)
         .await

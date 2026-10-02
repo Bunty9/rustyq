@@ -1,3 +1,4 @@
+#![cfg(feature = "telemetry")]
 //! Unit test: `telemetry::init` is idempotent and succeeds without an OTLP
 //! endpoint. The second call must not panic even though
 //! `tracing_subscriber::set_global_default` can only be called once per

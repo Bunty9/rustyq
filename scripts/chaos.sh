@@ -30,14 +30,14 @@ export RUSTYQ_LOCK_TIMEOUT_SECS="${RUSTYQ_LOCK_TIMEOUT_SECS:-10}"
 cd "$(git rev-parse --show-toplevel)"
 
 psql() { $COMPOSE exec -T postgres psql -U rustyq -d rustyq -tAq "$@"; }
-count() { psql -c "SELECT count(*) FROM jobs WHERE state IN ($1)"; }
+count() { psql -c "SELECT count(*) FROM rustyq_jobs WHERE state IN ($1)"; }
 
 echo "==> booting stack (workers scaled to 0, lock timeout ${RUSTYQ_LOCK_TIMEOUT_SECS}s)"
 $COMPOSE up -d --build --wait --scale rustyq-worker=0
 
 echo "==> inserting $JOBS jobs"
-psql -c "TRUNCATE jobs"
-psql -c "INSERT INTO jobs (id, queue, kind, payload, state)
+psql -c "TRUNCATE rustyq_jobs"
+psql -c "INSERT INTO rustyq_jobs (id, queue, kind, payload, state)
          SELECT gen_random_uuid(), 'default', 'sleep', '{\"ms\": $MS}', 'queued'
          FROM generate_series(1, $JOBS)"
 
@@ -66,7 +66,7 @@ deadline=$(( $(date +%s) + TIMEOUT_SECS ))
 while [ "$(count "'queued','running'")" -gt 0 ]; do
   if [ "$(date +%s)" -gt "$deadline" ]; then
     echo "FAIL: queue not drained after ${TIMEOUT_SECS}s"
-    psql -c "SELECT state, count(*) FROM jobs GROUP BY state"
+    psql -c "SELECT state, count(*) FROM rustyq_jobs GROUP BY state"
     exit 1
   fi
   if [ -z "$mem" ] && [ "$(count "'done'")" -ge $((JOBS / 2)) ]; then
@@ -76,10 +76,10 @@ while [ "$(count "'queued','running'")" -gt 0 ]; do
 done
 end=$(date +%s.%N)
 
-total=$(psql -c "SELECT count(*) FROM jobs")
+total=$(psql -c "SELECT count(*) FROM rustyq_jobs")
 done_=$(count "'done'")
 dead=$(count "'dead'")
-rerun=$(psql -c "SELECT count(*) FROM jobs WHERE attempts > 1")
+rerun=$(psql -c "SELECT count(*) FROM rustyq_jobs WHERE attempts > 1")
 awk -v n="$JOBS" -v w="$WORKERS" -v s="$start" -v e="$end" -v k="$KILL" \
   'BEGIN { t = e - s; printf "==> drain: %d jobs, %d workers (%d killed): %.2fs = %.0f jobs/s\n", n, w, k, t, n / t }'
 echo "==> total=$total done=$done_ dead=$dead re-run(attempts>1)=$rerun"

@@ -18,7 +18,7 @@ echo "    job id: $JOB_ID"
 echo "==> wait for worker to finalize (state=done)"
 for i in $(seq 1 20); do
   STATE=$(docker compose exec -T postgres psql -U rustyq -d rustyq -tA \
-    -c "SELECT state FROM jobs WHERE id='$JOB_ID'" | tr -d '[:space:]')
+    -c "SELECT state FROM rustyq_jobs WHERE id='$JOB_ID'" | tr -d '[:space:]')
   echo "    [$i] state=$STATE"
   if [ "$STATE" = "done" ]; then
     echo "==> SUCCESS"
@@ -29,5 +29,5 @@ done
 
 echo "==> FAILED: job never reached state=done"
 docker compose exec -T postgres psql -U rustyq -d rustyq \
-  -c "SELECT id,state,attempts,locked_by,last_error FROM jobs WHERE id='$JOB_ID'"
+  -c "SELECT id,state,attempts,locked_by,last_error FROM rustyq_jobs WHERE id='$JOB_ID'"
 exit 1

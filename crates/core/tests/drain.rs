@@ -34,7 +34,7 @@ async fn concurrency_limited_drain_does_not_idle_between_batches() {
     // rather than idling again for another full poll interval.
     let ids: Vec<Uuid> = (0..20).map(|_| Uuid::now_v7()).collect();
     sqlx::query(
-        "INSERT INTO jobs (id, queue, kind, payload, state) \
+        "INSERT INTO rustyq_jobs (id, queue, kind, payload, state) \
          SELECT id, 'default', 'drain_sleep', '{}', 'queued' FROM UNNEST($1::uuid[]) AS id",
     )
     .bind(&ids)
@@ -65,7 +65,7 @@ async fn concurrency_limited_drain_does_not_idle_between_batches() {
     // generous headroom for a loaded CI box while still catching that.
     let done = timeout(Duration::from_secs(6), async {
         loop {
-            let n: i64 = sqlx::query("SELECT COUNT(*) FROM jobs WHERE state='done'")
+            let n: i64 = sqlx::query("SELECT COUNT(*) FROM rustyq_jobs WHERE state='done'")
                 .fetch_one(&pool)
                 .await
                 .expect("query")

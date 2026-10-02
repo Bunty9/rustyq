@@ -22,7 +22,7 @@ async fn claim_batch_drains_up_to_n_rows() {
     for _ in 0..10 {
         let id = Uuid::now_v7();
         sqlx::query(
-            "INSERT INTO jobs (id, queue, kind, payload, state) \
+            "INSERT INTO rustyq_jobs (id, queue, kind, payload, state) \
              VALUES ($1, 'default', 'noop', '{}', 'queued')",
         )
         .bind(id)
@@ -44,12 +44,12 @@ async fn claim_batch_drains_up_to_n_rows() {
     assert_eq!(batch.len(), 4, "should claim exactly 4 rows in one batch");
 
     // 4 should be running, 6 still queued.
-    let running: i64 = sqlx::query("SELECT COUNT(*) FROM jobs WHERE state='running'")
+    let running: i64 = sqlx::query("SELECT COUNT(*) FROM rustyq_jobs WHERE state='running'")
         .fetch_one(&pool)
         .await
         .expect("count running")
         .get(0);
-    let queued: i64 = sqlx::query("SELECT COUNT(*) FROM jobs WHERE state='queued'")
+    let queued: i64 = sqlx::query("SELECT COUNT(*) FROM rustyq_jobs WHERE state='queued'")
         .fetch_one(&pool)
         .await
         .expect("count queued")
@@ -78,7 +78,7 @@ async fn claim_batch_zero_returns_empty_without_query() {
     // Even if jobs exist, asking for 0 should short-circuit.
     let id = Uuid::now_v7();
     sqlx::query(
-        "INSERT INTO jobs (id, queue, kind, payload, state) \
+        "INSERT INTO rustyq_jobs (id, queue, kind, payload, state) \
          VALUES ($1, 'default', 'noop', '{}', 'queued')",
     )
     .bind(id)
@@ -98,7 +98,7 @@ async fn claim_batch_zero_returns_empty_without_query() {
     assert!(batch.is_empty());
 
     // Job must remain queued, untouched.
-    let queued: i64 = sqlx::query("SELECT COUNT(*) FROM jobs WHERE state='queued'")
+    let queued: i64 = sqlx::query("SELECT COUNT(*) FROM rustyq_jobs WHERE state='queued'")
         .fetch_one(&pool)
         .await
         .expect("count")

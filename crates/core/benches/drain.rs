@@ -113,14 +113,14 @@ async fn run(
 
     // ---- 1. drain ---------------------------------------------------------
     sqlx::query(
-        "INSERT INTO jobs (id, queue, kind, payload, state) \
+        "INSERT INTO rustyq_jobs (id, queue, kind, payload, state) \
          SELECT gen_random_uuid(), 'default', 'noop', '{}', 'queued' \
          FROM generate_series(1, $1)",
     )
     .bind(jobs as i64)
     .execute(pool)
     .await?;
-    sqlx::query("ANALYZE jobs").execute(pool).await?;
+    sqlx::query("ANALYZE rustyq_jobs").execute(pool).await?;
 
     let cancel = CancellationToken::new();
     let started = Instant::now();
@@ -143,7 +143,7 @@ async fn run(
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
     loop {
-        let (done,): (i64,) = sqlx::query_as("SELECT count(*) FROM jobs WHERE state='done'")
+        let (done,): (i64,) = sqlx::query_as("SELECT count(*) FROM rustyq_jobs WHERE state='done'")
             .fetch_one(pool)
             .await?;
         if done as usize >= jobs {
@@ -171,7 +171,7 @@ async fn run(
     record_latency.store(true, Ordering::Relaxed);
     for _ in 0..latency_jobs {
         sqlx::query(
-            "WITH ins AS (INSERT INTO jobs (id, queue, kind, payload, state) \
+            "WITH ins AS (INSERT INTO rustyq_jobs (id, queue, kind, payload, state) \
              VALUES ($1, 'default', 'noop', '{}', 'queued')) \
              SELECT pg_notify('rustyq_new', '')::text",
         )

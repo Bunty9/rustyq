@@ -79,7 +79,7 @@ async fn options_are_stored() {
     .expect("enqueue");
     let row = sqlx::query(
         "SELECT priority, max_attempts, run_at > now() + interval '60 seconds' AS later, \
-         run_at < now() + interval '120 seconds' AS sooner FROM jobs WHERE id=$1",
+         run_at < now() + interval '120 seconds' AS sooner FROM rustyq_jobs WHERE id=$1",
     )
     .bind(id)
     .fetch_one(&pool)

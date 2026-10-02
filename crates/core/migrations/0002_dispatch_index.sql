@@ -5,6 +5,6 @@
 -- ponytail: queue is filtered during the scan, so a worker draining a rare
 -- queue behind a huge other queue scans past foreign rows; add a per-queue
 -- index if that workload appears.
-DROP INDEX IF EXISTS idx_jobs_dispatch;
-CREATE INDEX idx_jobs_dispatch ON jobs (priority DESC, run_at)
+DROP INDEX IF EXISTS idx_rustyq_jobs_dispatch;
+CREATE INDEX idx_rustyq_jobs_dispatch ON rustyq_jobs (priority DESC, run_at)
   WHERE state = 'queued';

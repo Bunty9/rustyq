@@ -27,7 +27,7 @@ bench/celery/run.sh 20000 4         # Celery baseline (separate compose project)
 - **No `sqlx::query!`/`query_as!` macros.** Library crates use runtime
   queries (`sqlx::query(..).bind(..)`): a downstream crate with
   `DATABASE_URL` set at compile time would run our macros against *its* DB.
-- **Migrations are append-only.** Never edit an existing file in
+- **Migrations are append-only** (the table is `rustyq_jobs`, not `jobs`, so it cannot collide with an app's table; the pre-release rename was the one allowed in-place edit). Never edit an existing file in
   `crates/core/migrations/` (sqlx checksums; initdb'd volumes keep old
   objects). Add `000N_*.sql`; they are embedded via `sqlx::migrate!` and tests
   call `rustyq_core::migrate`, so there is no list to maintain.

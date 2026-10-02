@@ -60,7 +60,7 @@ async fn fail_once_retries_to_done() {
     // so finalize's backoff = 2^1 = 2s — fits within the 10s budget.
     let job_id = Uuid::now_v7();
     sqlx::query(
-        "INSERT INTO jobs (id, queue, kind, payload, state, max_attempts) \
+        "INSERT INTO rustyq_jobs (id, queue, kind, payload, state, max_attempts) \
          VALUES ($1, 'default', 'fail_once', '{}', 'queued', 3)",
     )
     .bind(job_id)
@@ -86,7 +86,7 @@ async fn fail_once_retries_to_done() {
 
     let final_state = timeout(Duration::from_secs(10), async {
         loop {
-            let state: String = sqlx::query("SELECT state FROM jobs WHERE id=$1")
+            let state: String = sqlx::query("SELECT state FROM rustyq_jobs WHERE id=$1")
                 .bind(job_id)
                 .fetch_one(&pool)
                 .await
@@ -106,7 +106,7 @@ async fn fail_once_retries_to_done() {
 
     assert_eq!(final_state, "done", "fail_once should retry to done");
 
-    let row = sqlx::query("SELECT attempts, last_error FROM jobs WHERE id=$1")
+    let row = sqlx::query("SELECT attempts, last_error FROM rustyq_jobs WHERE id=$1")
         .bind(job_id)
         .fetch_one(&pool)
         .await

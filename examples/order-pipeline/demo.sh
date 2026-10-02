@@ -138,7 +138,7 @@ FRAUD_ID=$(curl -fs -X POST "$API/queue/jobs" -H 'content-type: application/json
 settled=0
 for _ in $(seq 120); do
   paid=$(q "SELECT count(*) FROM orders WHERE status='paid'")
-  open=$(q "SELECT count(*) FROM jobs WHERE state NOT IN ('done','dead')")
+  open=$(q "SELECT count(*) FROM rustyq_jobs WHERE state NOT IN ('done','dead')")
   if [ "$paid" = 3 ] && [ "$open" = 0 ]; then settled=1; break; fi
   sleep 0.5
 done
@@ -154,18 +154,18 @@ check_eq "sent_emails: every order exactly once"    "$(q "SELECT count(*) FROM o
 check_eq "charges: 3 rows"                          "$(q "SELECT count(*) FROM charges")" 3
 check_eq "orders: 3 paid"                           "$(q "SELECT count(*) FROM orders WHERE status='paid'")" 3
 check_eq "payment.charge: done after 2 attempts, gateway timeout recorded" \
-  "$(q "SELECT count(*) FROM jobs WHERE kind='payment.charge' AND state='done' AND attempts=2 AND last_error LIKE '%gateway timeout%'")" 3
+  "$(q "SELECT count(*) FROM rustyq_jobs WHERE kind='payment.charge' AND state='done' AND attempts=2 AND last_error LIKE '%gateway timeout%'")" 3
 check_eq "email.order_confirmation: done on attempt 1" \
-  "$(q "SELECT count(*) FROM jobs WHERE kind='email.order_confirmation' AND state='done' AND attempts=1")" 3
+  "$(q "SELECT count(*) FROM rustyq_jobs WHERE kind='email.order_confirmation' AND state='done' AND attempts=1")" 3
 check_eq "report.daily: a daily_reports row exists" \
   "$(q "SELECT (count(*) > 0)::int FROM daily_reports")" 1
 check_eq "report.daily: scheduled with a 2s delay (run_at > created_at)" \
-  "$(q "SELECT (count(*) > 0)::int FROM jobs WHERE kind='report.daily' AND state='done' AND run_at >= created_at + interval '1.9 seconds'")" 1
+  "$(q "SELECT (count(*) > 0)::int FROM rustyq_jobs WHERE kind='report.daily' AND state='done' AND run_at >= created_at + interval '1.9 seconds'")" 1
 check_eq "fraud.review (curl): dead on attempt 1 with last_error" \
-  "$(q "SELECT count(*) FROM jobs WHERE id='$FRAUD_ID' AND state='dead' AND attempts=1 AND last_error LIKE '%bad fraud payload%'")" 1
+  "$(q "SELECT count(*) FROM rustyq_jobs WHERE id='$FRAUD_ID' AND state='dead' AND attempts=1 AND last_error LIKE '%bad fraud payload%'")" 1
 if [ "${PYTHON_CLIENT:-}" = 1 ]; then
   check_eq "fraud.review (python + curl): 2 dead jobs, each attempts=1" \
-    "$(q "SELECT count(*) FROM jobs WHERE kind='fraud.review' AND state='dead' AND attempts=1")" 2
+    "$(q "SELECT count(*) FROM rustyq_jobs WHERE kind='fraud.review' AND state='dead' AND attempts=1")" 2
 fi
 
 # ---- 8. metrics -------------------------------------------------------------
@@ -183,7 +183,7 @@ wait "$WORKER_PID" || wrc=$?
 wait "$API_PID" || arc=$?
 check_eq "worker exited 0 on SIGTERM" "$wrc" 0
 check_eq "api exited 0 on SIGTERM"    "$arc" 0
-check_eq "no job left running"        "$(q "SELECT count(*) FROM jobs WHERE state='running'")" 0
+check_eq "no job left running"        "$(q "SELECT count(*) FROM rustyq_jobs WHERE state='running'")" 0
 
 # ---- 10. summary ------------------------------------------------------------
 echo

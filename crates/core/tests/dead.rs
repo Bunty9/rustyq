@@ -27,7 +27,7 @@ async fn always_fail_reaches_dead() {
     // second attempt -> fail -> dead.
     let job_id = Uuid::now_v7();
     sqlx::query(
-        "INSERT INTO jobs (id, queue, kind, payload, state, max_attempts) \
+        "INSERT INTO rustyq_jobs (id, queue, kind, payload, state, max_attempts) \
          VALUES ($1, 'default', 'always_fail', '{}', 'queued', 2)",
     )
     .bind(job_id)
@@ -53,7 +53,7 @@ async fn always_fail_reaches_dead() {
 
     let final_state = timeout(Duration::from_secs(15), async {
         loop {
-            let state: String = sqlx::query("SELECT state FROM jobs WHERE id=$1")
+            let state: String = sqlx::query("SELECT state FROM rustyq_jobs WHERE id=$1")
                 .bind(job_id)
                 .fetch_one(&pool)
                 .await
@@ -73,7 +73,7 @@ async fn always_fail_reaches_dead() {
 
     assert_eq!(final_state, "dead", "exhausted job must be dead");
 
-    let row = sqlx::query("SELECT attempts, last_error FROM jobs WHERE id=$1")
+    let row = sqlx::query("SELECT attempts, last_error FROM rustyq_jobs WHERE id=$1")
         .bind(job_id)
         .fetch_one(&pool)
         .await

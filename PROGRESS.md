@@ -13,7 +13,7 @@
 - [x] `crates/worker` — daemon binary, Ctrl-C cancels via `CancellationToken`
 - [x] `crates/pybind` — PyO3 + maturin `pyproject.toml`
 - [x] `crates/client` — async Rust client wrapping reqwest
-- [x] `crates/core/migrations/0001_init.sql` (moved from root in Phase 9) — `jobs` table + dispatch / locked indexes
+- [x] `crates/core/migrations/0001_init.sql` (moved from root in Phase 9) — `rustyq_jobs` table + dispatch / locked indexes
 - [x] `Dockerfile` — cargo-chef multi-stage + distroless
 - [x] `docker-compose.yml` — postgres + server + 2 workers
 - [x] `fly.toml` — region `sin`, Neon-attached

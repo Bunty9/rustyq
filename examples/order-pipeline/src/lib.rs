@@ -54,7 +54,7 @@ pub async fn connect_and_migrate(database_url: &str, pool_size: u32) -> anyhow::
         .connect(database_url)
         .await?;
 
-    // 1. rustyq's own tables (the `jobs` table), versions 1 and 2.
+    // 1. rustyq's own tables (the `rustyq_jobs` table), versions 1 and 2.
     rustyq_core::migrate(&pool).await?;
 
     // 2. The application's tables. They share rustyq's `_sqlx_migrations`

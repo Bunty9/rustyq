@@ -38,7 +38,7 @@ async fn dispatch_happy_path() {
     for _ in 0..5 {
         let id = Uuid::now_v7();
         sqlx::query(
-            "INSERT INTO jobs (id, queue, kind, payload, state) \
+            "INSERT INTO rustyq_jobs (id, queue, kind, payload, state) \
              VALUES ($1, 'default', 'count', '{}', 'queued')",
         )
         .bind(id)
@@ -69,7 +69,7 @@ async fn dispatch_happy_path() {
     // state='running'.
     let done_count = timeout(Duration::from_secs(10), async {
         loop {
-            let n: i64 = sqlx::query("SELECT COUNT(*) FROM jobs WHERE state='done'")
+            let n: i64 = sqlx::query("SELECT COUNT(*) FROM rustyq_jobs WHERE state='done'")
                 .fetch_one(&pool)
                 .await
                 .expect("query")

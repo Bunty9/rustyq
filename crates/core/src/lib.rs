@@ -5,6 +5,7 @@
 //! based on outcome (done / requeue with exponential backoff / dead).
 
 pub mod handler;
+#[cfg(feature = "telemetry")]
 pub mod telemetry;
 pub use handler::{Handler, HandlerFut, Registry, RegistryBuilder};
 
@@ -79,6 +80,10 @@ pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 /// Apply rustyq's migrations to `pool`.
 ///
+/// rustyq owns the table `rustyq_jobs` (and its indexes) in the connection's
+/// current `search_path` schema; use a dedicated schema via `search_path` if
+/// you want it isolated from your own tables.
+///
 /// Runs with `ignore_missing = true`, so it accepts an application's
 /// versions already present in a shared `_sqlx_migrations` table.
 ///
@@ -147,8 +152,9 @@ impl NewJob {
         self.delay = d;
         self
     }
+    /// Total attempts before the job is marked dead. Clamped to at least 1.
     pub fn max_attempts(mut self, n: i32) -> Self {
-        self.max_attempts = n;
+        self.max_attempts = n.max(1);
         self
     }
 }
@@ -161,7 +167,7 @@ pub async fn enqueue<'e, E: PgExecutor<'e>>(executor: E, job: &NewJob) -> sqlx::
     let id = Uuid::now_v7();
     sqlx::query(
         "WITH ins AS (
-           INSERT INTO jobs (id, queue, kind, payload, state, priority, run_at, max_attempts)
+           INSERT INTO rustyq_jobs (id, queue, kind, payload, state, priority, run_at, max_attempts)
            VALUES ($1, $2, $3, $4, 'queued', $5, now() + make_interval(secs => $6), $7)
          ) SELECT pg_notify('rustyq_new', '')",
     )
@@ -212,6 +218,7 @@ pub fn permanent(err: impl Into<anyhow::Error>) -> anyhow::Error {
 /// `payload` and `locked_at` are deliberately omitted to keep the surface
 /// stable.
 #[derive(Debug, Clone, Serialize, FromRow)]
+#[non_exhaustive]
 pub struct JobStatus {
     pub id: Uuid,
     pub state: String,
@@ -229,7 +236,7 @@ pub async fn job_status<'e, E: PgExecutor<'e>>(
 ) -> sqlx::Result<Option<JobStatus>> {
     sqlx::query_as::<_, JobStatus>(
         "SELECT id, state, attempts, max_attempts, run_at, locked_by, last_error \
-         FROM jobs WHERE id = $1",
+         FROM rustyq_jobs WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(executor)
@@ -513,9 +520,9 @@ impl Worker {
         }
         let rows = sqlx::query_as::<_, Job>(
             r#"
-            UPDATE jobs SET state='running', locked_at=now(), locked_by=$1, attempts=attempts+1
+            UPDATE rustyq_jobs SET state='running', locked_at=now(), locked_by=$1, attempts=attempts+1
             WHERE id IN (
-              SELECT id FROM jobs
+              SELECT id FROM rustyq_jobs
               WHERE state='queued' AND run_at <= now() AND queue = ANY($2)
               ORDER BY priority DESC, run_at
               FOR UPDATE SKIP LOCKED
@@ -548,7 +555,7 @@ impl Worker {
 pub async fn reap_stale(pool: &PgPool, lock_timeout: Duration) -> sqlx::Result<u64> {
     let result = sqlx::query(
         r#"
-        UPDATE jobs
+        UPDATE rustyq_jobs
         SET state = CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'queued' END,
             locked_at = NULL,
             last_error = COALESCE(last_error, 'lock expired: worker presumed dead')
@@ -579,10 +586,10 @@ pub async fn finalize_done_batch(
     let (ids, attempts): (Vec<Uuid>, Vec<i32>) = jobs.iter().copied().unzip();
     let n = sqlx::query(
         r#"
-        UPDATE jobs SET state='done', locked_at=NULL
+        UPDATE rustyq_jobs SET state='done', locked_at=NULL
         FROM UNNEST($2::uuid[], $3::int4[]) AS f(id, attempts)
-        WHERE jobs.id=f.id AND jobs.attempts=f.attempts
-          AND jobs.state='running' AND jobs.locked_by=$1
+        WHERE rustyq_jobs.id=f.id AND rustyq_jobs.attempts=f.attempts
+          AND rustyq_jobs.state='running' AND rustyq_jobs.locked_by=$1
         "#,
     )
     .bind(worker_id)
@@ -625,7 +632,7 @@ pub async fn finalize(
     match res {
         Ok(()) => {
             let result = sqlx::query(
-                "UPDATE jobs SET state='done', locked_at=NULL \
+                "UPDATE rustyq_jobs SET state='done', locked_at=NULL \
                  WHERE id=$1 AND state='running' AND locked_by=$2 AND attempts=$3",
             )
             .bind(job.id)
@@ -646,7 +653,7 @@ pub async fn finalize(
         }
         Err(e) if job.attempts >= job.max_attempts || e.is::<Permanent>() => {
             let result = sqlx::query(
-                "UPDATE jobs SET state='dead', last_error=$2, locked_at=NULL \
+                "UPDATE rustyq_jobs SET state='dead', last_error=$2, locked_at=NULL \
                  WHERE id=$1 AND state='running' AND locked_by=$3 AND attempts=$4",
             )
             .bind(job.id)
@@ -671,7 +678,7 @@ pub async fn finalize(
             let shift = job.attempts.min(12) as u32;
             let delay = (1u64 << shift).min(3600) as i32;
             let result = sqlx::query(
-                "UPDATE jobs SET state='queued', last_error=$2, \
+                "UPDATE rustyq_jobs SET state='queued', last_error=$2, \
                  run_at = now() + make_interval(secs => $3::int), locked_at=NULL \
                  WHERE id=$1 AND state='running' AND locked_by=$4 AND attempts=$5",
             )

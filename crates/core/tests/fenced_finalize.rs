@@ -21,7 +21,7 @@ async fn finalize_skips_when_lock_was_stolen() {
 
     let job_id = Uuid::now_v7();
     sqlx::query(
-        "INSERT INTO jobs (id, queue, kind, payload, state, max_attempts) \
+        "INSERT INTO rustyq_jobs (id, queue, kind, payload, state, max_attempts) \
          VALUES ($1, 'default', 'noop', '{}', 'queued', 5)",
     )
     .bind(job_id)
@@ -41,7 +41,7 @@ async fn finalize_skips_when_lock_was_stolen() {
 
     // Simulate A stalling long enough to be presumed dead: backdate its
     // lock past the reap threshold, then reap and let B re-claim it.
-    sqlx::query("UPDATE jobs SET locked_at = now() - interval '600 seconds' WHERE id=$1")
+    sqlx::query("UPDATE rustyq_jobs SET locked_at = now() - interval '600 seconds' WHERE id=$1")
         .bind(job_id)
         .execute(&pool)
         .await
@@ -72,7 +72,7 @@ async fn finalize_skips_when_lock_was_stolen() {
         "finalize must report no terminal state once the lock was lost"
     );
 
-    let row = sqlx::query("SELECT state, locked_by FROM jobs WHERE id=$1")
+    let row = sqlx::query("SELECT state, locked_by FROM rustyq_jobs WHERE id=$1")
         .bind(job_id)
         .fetch_one(&pool)
         .await
@@ -95,7 +95,7 @@ async fn finalize_skips_when_same_worker_reclaimed() {
 
     let job_id = Uuid::now_v7();
     sqlx::query(
-        "INSERT INTO jobs (id, queue, kind, payload, state, max_attempts) \
+        "INSERT INTO rustyq_jobs (id, queue, kind, payload, state, max_attempts) \
          VALUES ($1, 'default', 'noop', '{}', 'queued', 5)",
     )
     .bind(job_id)
@@ -113,7 +113,7 @@ async fn finalize_skips_when_same_worker_reclaimed() {
     let stale = worker.claim_batch(1).await.expect("first claim");
     let stale = stale.into_iter().next().expect("claimed the job");
 
-    sqlx::query("UPDATE jobs SET locked_at = now() - interval '600 seconds' WHERE id=$1")
+    sqlx::query("UPDATE rustyq_jobs SET locked_at = now() - interval '600 seconds' WHERE id=$1")
         .bind(job_id)
         .execute(&pool)
         .await
@@ -131,7 +131,7 @@ async fn finalize_skips_when_same_worker_reclaimed() {
         .expect("finalize");
     assert!(result.is_none(), "stale run must lose the fence");
 
-    let state: String = sqlx::query("SELECT state FROM jobs WHERE id=$1")
+    let state: String = sqlx::query("SELECT state FROM rustyq_jobs WHERE id=$1")
         .bind(job_id)
         .fetch_one(&pool)
         .await
@@ -158,7 +158,7 @@ async fn batch_finalize_skips_stale_entries() {
 
     let ids: Vec<Uuid> = (0..3).map(|_| Uuid::now_v7()).collect();
     sqlx::query(
-        "INSERT INTO jobs (id, queue, kind, payload, state) \
+        "INSERT INTO rustyq_jobs (id, queue, kind, payload, state) \
          SELECT id, 'default', 'noop', '{}', 'queued' FROM UNNEST($1::uuid[]) AS id",
     )
     .bind(&ids)
@@ -184,7 +184,7 @@ async fn batch_finalize_skips_stale_entries() {
         .expect("batch finalize");
     assert_eq!(n, 2);
 
-    let running: i64 = sqlx::query("SELECT count(*) FROM jobs WHERE state='running'")
+    let running: i64 = sqlx::query("SELECT count(*) FROM rustyq_jobs WHERE state='running'")
         .fetch_one(&pool)
         .await
         .expect("query")
