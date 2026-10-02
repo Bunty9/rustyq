@@ -42,6 +42,9 @@ async fn rollback_leaves_no_row() {
         eprintln!("skipping: TEST_DATABASE_URL unset");
         return;
     };
+    let mut listener = PgListener::connect_with(&pool).await.expect("listener");
+    listener.listen("rustyq_new").await.expect("listen");
+
     let mut tx = pool.begin().await.expect("begin");
     let id = enqueue(
         &mut *tx,
@@ -51,6 +54,12 @@ async fn rollback_leaves_no_row() {
     .expect("enqueue");
     tx.rollback().await.expect("rollback");
     assert!(job_status(&pool, id).await.expect("status").is_none());
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), listener.recv())
+            .await
+            .is_err(),
+        "rolled-back enqueue must not wake listeners"
+    );
 }
 
 #[tokio::test]

@@ -71,15 +71,33 @@ impl Job {
 }
 
 /// rustyq's embedded schema migrations (`crates/core/migrations`).
+///
+/// Strict: `MIGRATOR.run()` fails with `VersionMissing` on a
+/// `_sqlx_migrations` table shared with an application's own migrations. Use
+/// [`migrate`] instead.
 pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
 
 /// Apply rustyq's migrations to `pool`.
 ///
-/// Runs with `ignore_missing = true`, so an application that shares the
-/// `_sqlx_migrations` table with its own migrations (e.g. timestamp-versioned)
-/// can call this without sqlx rejecting the application's applied versions as
-/// "missing". rustyq's own versions are `0001..`, which sort before any
-/// timestamp version. Use [`MIGRATOR`] directly for strict checking.
+/// Runs with `ignore_missing = true`, so it accepts an application's
+/// versions already present in a shared `_sqlx_migrations` table.
+///
+/// The application's side has two constraints once rustyq's versions (1, 2,
+/// ...) are in that table:
+/// - its own migrator must also call `set_ignore_missing(true)`, otherwise
+///   sqlx fails with `VersionMissing(1)`;
+/// - its migrations must use timestamp versions (e.g.
+///   `20261002000001_create_users.sql`); sequential `0001_*` files collide
+///   with rustyq's (`VersionMismatch`).
+///
+/// ```no_run
+/// # async fn demo(pool: sqlx::PgPool) -> Result<(), Box<dyn std::error::Error>> {
+/// rustyq_core::migrate(&pool).await?;
+/// let mut app = sqlx::migrate!("./migrations"); // 20261002000001_*.sql, ...
+/// app.set_ignore_missing(true);
+/// app.run(&pool).await?;
+/// # Ok(()) }
+/// ```
 pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
     // Same migrations as MIGRATOR, but tolerant of versions applied by someone else.
     static LENIENT: OnceLock<Migrator> = OnceLock::new();
@@ -161,6 +179,11 @@ pub async fn enqueue<'e, E: PgExecutor<'e>>(executor: E, job: &NewJob) -> sqlx::
 
 /// Wrapper marking a handler error as non-retryable: [`finalize`] sends the
 /// job straight to `dead`. Build one with [`permanent`].
+///
+/// `source()` skips the inner error (its message is already this type's
+/// Display, and `{:#}` would otherwise repeat it), so to inspect the inner
+/// error use `err.downcast_ref::<Permanent>()` and then `.0`, not a direct
+/// downcast to the inner type.
 #[derive(Debug)]
 pub struct Permanent(pub anyhow::Error);
 
