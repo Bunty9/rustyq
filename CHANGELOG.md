@@ -33,7 +33,14 @@ First public release.
 - Async Rust client (`rustyq-client`) and Python client (`rustyq` on PyPI,
   one `abi3` wheel per platform for CPython 3.9+).
 - Chaos test harness (SIGKILL half the workers, assert zero job loss),
-  drain/latency benchmarks, and a Docker image at `ghcr.io/bunty9/rustyq`.
+  drain/latency benchmarks, an end-to-end reference app
+  (`examples/order-pipeline`), and a Docker image at `ghcr.io/bunty9/rustyq`.
+
+### Fixed
+
+- `rustyq_server::router()` now installs the Prometheus recorder when the
+  router is built; previously `rustyq_jobs_enqueued_total` increments made
+  before the first `/metrics` scrape were dropped.
 
 ### API notes
 

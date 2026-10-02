@@ -10,9 +10,10 @@ client. Workspace crates: `core` (Job, Worker loop, claim/finalize/reap),
 ```bash
 export PATH=$HOME/.cargo/bin:$PATH
 eval "$(./scripts/test-pg.sh up | tail -1)"        # Postgres on :55432, exports TEST_DATABASE_URL
-SQLX_OFFLINE=true cargo test --workspace -- --test-threads=1
-cargo fmt --all && SQLX_OFFLINE=true cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace -- --test-threads=1
+cargo fmt --all && cargo clippy --workspace --all-targets -- -D warnings
 BENCH_DATABASE_URL=$TEST_DATABASE_URL cargo bench -p rustyq-core --bench drain   # drain + latency
+examples/order-pipeline/demo.sh     # end-to-end example; APP_PORT=... if :3000 is busy
 scripts/chaos.sh 20000 4            # compose stack, SIGKILL half the workers, assert zero loss
 KILL=0 MS=0 scripts/chaos.sh        # same harness as a plain in-Docker drain benchmark
 bench/celery/run.sh 20000 4         # Celery baseline (separate compose project)
@@ -59,8 +60,16 @@ Commits are authored by `Bunty9 <Bunty9@users.noreply.github.com>` only. No
 changelogs (see `~/.claude/CLAUDE.md`). Commit subjects follow
 `phase N: <what>`.
 
+## Releasing
+
+See `docs/RELEASING.md`. Push a tag `vX.Y.Z` and `.github/workflows/release.yml`
+publishes; the `pypi` and `crates-io` environments need approval. Before
+tagging, bump the literal `version = "..."` on the `rustyq-core` path deps in
+`crates/server/Cargo.toml` and `crates/worker/Cargo.toml` (and the workspace
+version).
+
 ## Status
 
 See `PROGRESS.md` (sprint tracker, bench table, remaining/blocked work) and
 `docs/plans/2026-06-02-rustyq-execution-plan.md` (phase plan). Deploy (Fly +
-Neon), TestPyPI and crates.io publishing need credentials and are not done.
+Neon) needs credentials and is not done; PyPI/crates.io publish via the tag workflow.

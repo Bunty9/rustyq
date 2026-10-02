@@ -13,7 +13,7 @@
 - [x] `crates/worker` — daemon binary, Ctrl-C cancels via `CancellationToken`
 - [x] `crates/pybind` — PyO3 + maturin `pyproject.toml`
 - [x] `crates/client` — async Rust client wrapping reqwest
-- [x] `migrations/0001_init.sql` — `jobs` table + dispatch / locked indexes
+- [x] `crates/core/migrations/0001_init.sql` (moved from root in Phase 9) — `jobs` table + dispatch / locked indexes
 - [x] `Dockerfile` — cargo-chef multi-stage + distroless
 - [x] `docker-compose.yml` — postgres + server + 2 workers
 - [x] `fly.toml` — region `sin`, Neon-attached
@@ -49,7 +49,7 @@
 - [x] `tracing-opentelemetry` OTLP exporter behind a flag — landed in
       Phase 3 (see below), not Phase 2 as originally sequenced
 - [x] Switch back to `sqlx::query!` macros + `sqlx prepare` in CI —
-      landed in Phase 3 (see below)
+      landed in Phase 3, later reverted to runtime queries (Phase 9)
 - [x] Criterion-style bench harness in `crates/core/benches/` — landed in
       Phase 4 as a plain `harness = false` binary (`benches/drain.rs`),
       not Criterion (a 20k–100k job drain is one long measurement, not a
@@ -79,10 +79,9 @@
       local trace viewing
 - [x] `claim_batch`, `finalize`, `finalize_done_batch`, `reap_stale`,
       enqueue, and status all rewritten with `sqlx::query!`/`query_as!`
-      macros; `.sqlx/*.json` committed
-- [x] `.github/workflows/ci.yml`: `test` job builds with `SQLX_OFFLINE=true`;
-      separate `sqlx-check` job applies migrations to a fresh Postgres and
-      runs `cargo sqlx prepare --workspace --check -- --tests`
+      macros (since replaced by runtime queries, see Phase 9)
+- [x] `.github/workflows/ci.yml` offline-metadata build and `sqlx-check`
+      job — removed in Phase 9 along with `.sqlx/`
 - [ ] Verify a full trace (enqueue → claim → run → finalize under one
       `trace_id`) end-to-end against a local Jaeger — **not run this
       session** (stretch goal in the original phase plan; OTLP export
@@ -102,7 +101,7 @@
       `queue = ANY($2)`, forcing a seq scan + full sort per claim
       (measured 82 ms/claim at 20k queued rows). New index
       `(priority DESC, run_at) WHERE state='queued'`
-      (`migrations/0002_dispatch_index.sql`) dropped that to 0.8 ms/claim.
+      (`crates/core/migrations/0002_dispatch_index.sql`) dropped that to 0.8 ms/claim.
 - [x] Batched success finalize — one `UPDATE ... FROM UNNEST(...)` per
       batch of up to 512 done jobs instead of one `UPDATE` per job
       (`finalize_done_batch`, `crates/core/src/lib.rs`).
@@ -183,6 +182,27 @@
 - [ ] Cross-post plan, tag `v0.1.0`, publish `rustyq-client` to
       crates.io — **not done**.
 
+## Sprint — Phase 9: embedder API, reference example, v0.1.0 release
+
+- [x] Core embedder API in `crates/core/src/lib.rs`: `migrate`, `NewJob`,
+      `enqueue` (any `PgExecutor`, so it joins the caller's transaction),
+      `payload_as`, `permanent`, `job_status`.
+- [x] Runtime `sqlx::query`/`query_as` instead of `query!` macros: library
+      crates must not run macros against a downstream `DATABASE_URL`. Removed
+      `.sqlx/` and the CI `sqlx-check` job.
+- [x] Migrations moved to `crates/core/migrations/` and embedded in the
+      crate, so `rustyq_core::migrate` works from crates.io.
+- [x] `examples/order-pipeline` (api / worker / producer bins, `producer.py`,
+      `demo.sh`, README tutorial) plus the CI `example` job.
+- [x] Packaging, per-crate READMEs, `CHANGELOG.md`, `docs/RELEASING.md` and
+      the tag-triggered `.github/workflows/release.yml` (trusted publishing,
+      `pypi` / `crates-io` environments).
+- [x] Fix: `rustyq_server::router()` installs the metrics recorder when built
+      (`crates/server/src/api.rs`), so enqueues before the first `/metrics`
+      scrape are counted; test `crates/server/tests/metrics_eager.rs`.
+- [ ] Create the `pypi` / `crates-io` environments, tag `v0.1.0` — done by
+      the maintainer, not in this branch.
+
 ## Bench numbers (as of 2026-09-26; Celery runs 09-26 to 09-28)
 
 Host: 8 vCPU / 39 GB Linux laptop, Postgres 16 inside Docker Desktop's VM,
@@ -218,10 +238,9 @@ Needs credentials or quiet hardware, not available this session:
   (`--migrate` on the server process group, `kill_timeout` 40s > worker
   `shutdown_grace` 30s, `/healthz` check), but no Fly account / Neon
   database was available to actually deploy.
-- **TestPyPI publish** (Phase 7) — `maturin build`/`publish` needs a
-  TestPyPI token.
-- **crates.io publish of `rustyq-client`** (Phase 8) — needs a crates.io
-  token.
+- **PyPI / crates.io publish** — now via trusted publishing from the tag
+  workflow; one-time setup (pending publisher, `CARGO_REGISTRY_TOKEN` for the
+  first crates.io release, environments) is in `docs/RELEASING.md`.
 - **Grafana screenshot** (Phase 6) — depends on the Fly deploy above.
 - **Re-measure drain throughput and dispatch p99 on quiet hardware** —
   this session's numbers were taken on a laptop at load average 25–50
@@ -230,6 +249,8 @@ Needs credentials or quiet hardware, not available this session:
   real.
 - **Scope the `rustyq_new` LISTEN/NOTIFY channel per database/schema** so
   the test suite can drop `--test-threads=1` and run in parallel.
+- **Quiet-hardware Celery rerun** — the throughput ratio is still
+  inconclusive on the shared host.
 - **5 consecutive clean chaos runs** — only one run was performed this
   session.
 - **Live OTLP trace capture** — the exporter is implemented and unit

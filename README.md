@@ -4,9 +4,10 @@
 > alternative for Python services that need predictable throughput, retries,
 > and observability without giving up their existing Postgres footprint.
 
-[![ci](https://img.shields.io/badge/ci-pending-lightgrey.svg)](./.github/workflows/ci.yml)
-[![crates.io](https://img.shields.io/badge/crates.io-pending-lightgrey.svg)](#)
-[![pypi](https://img.shields.io/badge/pypi-pending-lightgrey.svg)](#)
+[![ci](https://github.com/Bunty9/rustyq/actions/workflows/ci.yml/badge.svg)](https://github.com/Bunty9/rustyq/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/rustyq-core.svg)](https://crates.io/crates/rustyq-core)
+[![pypi](https://img.shields.io/pypi/v/rustyq.svg)](https://pypi.org/project/rustyq/)
+[![docs.rs](https://docs.rs/rustyq-core/badge.svg)](https://docs.rs/rustyq-core)
 [![license](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
 ## The problem
@@ -96,7 +97,7 @@ use `job.attempts`/the job id to detect duplicate execution.
   configurable via flag/env) for in-flight jobs to finish, then gives the
   batch finalizer up to 10s to flush before exiting.
 - **Migrations** — `rustyq-server --migrate` (or `RUSTYQ_MIGRATE=true`) runs
-  `sqlx::migrate!` against `DATABASE_URL` before serving. Opt-in and meant for
+  the migrations embedded in `rustyq-core` (`crates/core/migrations/`) against `DATABASE_URL` before serving. Opt-in and meant for
   the server process only — never run it from every worker replica against a
   shared database.
 - **Tracing** — `tracing` + optional OTLP export via
@@ -133,12 +134,29 @@ caps, idempotency keys, cron/recurring scheduling, auth on the HTTP API.
 | CI                  | GitHub Actions (stable + beta) + `cargo-deny` + `cargo-nextest`     |
 
 Full pinned versions live in [`Cargo.toml`](./Cargo.toml). Schema:
-[`migrations/`](./migrations/).
+[`crates/core/migrations/`](./crates/core/migrations/).
+
+## Install
+
+```bash
+# Rust
+cargo add rustyq-core                         # embed the queue and worker in your app
+cargo add rustyq-client                       # async HTTP producer for a rustyq-server
+cargo install rustyq-server rustyq-worker     # standalone binaries
+
+# Python (producer client)
+pip install rustyq
+
+# Container (server is the default CMD; the worker is the same image)
+docker pull ghcr.io/bunty9/rustyq:0.1.0
+docker run --rm -e DATABASE_URL=... ghcr.io/bunty9/rustyq:0.1.0 /usr/local/bin/rustyq-server --migrate
+docker run --rm -e DATABASE_URL=... --entrypoint /usr/local/bin/rustyq-worker ghcr.io/bunty9/rustyq:0.1.0
+```
 
 ## Quick start (docker-compose)
 
 ```bash
-git clone <your-fork-url> rustyq
+git clone https://github.com/Bunty9/rustyq.git rustyq
 cd rustyq
 docker compose up --build
 # Postgres (internal only), server on :8080, two workers attached.
@@ -154,6 +172,55 @@ The stock worker only registers the built-in handlers `noop`, `sleep`
 (`payload.ms`) and `fail_once`. Any other `kind` fails with `no handler for
 kind '...'`, is retried with backoff, and ends `dead` after `max_attempts`
 (5); register your own `Handler`s in `crates/worker/src/main.rs`.
+
+## Use rustyq in your project
+
+Embed the queue in your own service: enqueue inside your own Postgres
+transaction, and run a worker next to your app.
+
+```rust
+use rustyq_core::{enqueue, migrate, permanent, HandlerFut, Job, NewJob, Registry, Worker};
+use serde::Deserialize;
+use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
+
+#[derive(Deserialize)]
+struct Email {
+    to: String,
+}
+
+fn send_email(job: &Job) -> HandlerFut {
+    let parsed = job.payload_as::<Email>();
+    Box::pin(async move {
+        // A malformed payload will never succeed: dead-letter it, don't retry.
+        let email = parsed.map_err(permanent)?;
+        println!("sending to {}", email.to); // plug in your mailer; Err(..) retries
+        Ok(())
+    })
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let pool = sqlx::PgPool::connect(&std::env::var("DATABASE_URL")?).await?;
+    migrate(&pool).await?; // idempotent; safe next to your own migrations
+
+    // Enqueue inside your own transaction: the job exists iff the commit does.
+    let mut tx = pool.begin().await?;
+    // ... INSERT your own rows here ...
+    let job = NewJob::new("default", "email", serde_json::json!({ "to": "a@b.c" }));
+    enqueue(&mut *tx, &job).await?;
+    tx.commit().await?;
+
+    let registry = Registry::builder().register("email", send_email).build();
+    let worker = Worker::new(pool, "worker-1".into(), vec!["default".into()], 8, Arc::new(registry));
+    worker.run(CancellationToken::new()).await // cancel the token to shut down
+}
+```
+
+The full reference app (HTTP API, worker, Python producer, transactional
+enqueue, retries, metrics) is in
+[`examples/order-pipeline/`](./examples/order-pipeline/README.md); run it end
+to end with `examples/order-pipeline/demo.sh`.
 
 ## Quick start (Python client)
 
@@ -317,29 +384,20 @@ eval "$(./scripts/test-pg.sh up | tail -1)"   # exports TEST_DATABASE_URL
 #    (tracked in PROGRESS.md).
 cargo nextest run --workspace --no-fail-fast --test-threads=1
 # or, without nextest:
-SQLX_OFFLINE=true cargo test --workspace -- --test-threads=1
+cargo test --workspace -- --test-threads=1
 
 # 3. Tear down:
 ./scripts/test-pg.sh down
 ```
 
-CI (`.github/workflows/ci.yml`) builds with `SQLX_OFFLINE=true` against the
-committed `.sqlx/` query metadata, so it needs no live `DATABASE_URL` at
-compile time; a separate `sqlx-check` job applies the migrations to a fresh
-Postgres and runs `cargo sqlx prepare --workspace --check -- --tests` to
-catch metadata drift. After changing a `sqlx::query!`/`query_as!` call,
-regenerate it locally with:
-
-```bash
-# against the test-pg.sh container (compose's Postgres publishes no host port)
-docker exec rustyq-test-pg psql -U postgres -c 'DROP DATABASE IF EXISTS rustyq_prepare' -c 'CREATE DATABASE rustyq_prepare'
-for f in migrations/*.sql; do docker exec -i rustyq-test-pg psql -U postgres -d rustyq_prepare < "$f"; done
-DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/rustyq_prepare cargo sqlx prepare --workspace -- --tests
-```
+Queries are plain runtime `sqlx::query` calls, so building needs no live
+database and no offline metadata. CI (`.github/workflows/ci.yml`) runs
+fmt, clippy, tests, `cargo-deny`, a bench smoke job and the
+`examples/order-pipeline` demo (`example` job).
 
 ## Deploy (Fly)
 
-**Config ready, not yet deployed** — this needs a Fly account and a
+**Config ready, not yet deployed** — the image is published to GHCR on release (`ghcr.io/bunty9/rustyq`); deploying needs a Fly account and a
 provisioned Neon database, neither of which was available this session.
 
 [`fly.toml`](./fly.toml) defines app `rustyq`, region `sin`, and two process
@@ -363,11 +421,13 @@ rustyq/
   Cargo.toml                # workspace
   crates/
     core/                   # Job, JobState, Worker, claim_batch, finalize, reap_stale
+                            #   + migrations/ (embedded; rustyq_core::migrate)
     server/                 # axum HTTP server (POST /jobs, status, healthz, metrics)
     worker/                 # worker daemon (boots Worker, built-in handlers)
     pybind/                 # PyO3 client + pyproject.toml (maturin)
     client/                 # async Rust client (reqwest)
-  migrations/               # jobs table + dispatch indexes (sqlx migrate)
+  examples/
+    order-pipeline/         # reference app embedding rustyq (demo.sh, producer.py)
   bench/
     celery/                 # Celery + Redis baseline rig for comparison
   scripts/
@@ -379,12 +439,21 @@ rustyq/
   fly.toml                  # Fly.io app, region sin, Neon-attached (not yet deployed)
   deny.toml                 # cargo-deny config
   rust-toolchain.toml       # stable channel
-  .github/workflows/ci.yml  # nextest + clippy + fmt + deny + sqlx-check + bench smoke
+  .github/workflows/ci.yml  # nextest + clippy + fmt + deny + bench smoke + example
+  .github/workflows/release.yml  # tag vX.Y.Z -> PyPI, crates.io, GHCR, GitHub release
+  CHANGELOG.md
   docs/
     specs/                  # design spec + 2026-09-26 bench writeup
     plans/                  # phase plans
+    RELEASING.md            # release process / trusted-publishing setup
   PROGRESS.md               # per-sprint tracker
 ```
+
+## Releases
+
+Release notes are in [CHANGELOG.md](./CHANGELOG.md). Pushing a `vX.Y.Z` tag
+publishes everything; the process and one-time setup are in
+[docs/RELEASING.md](./docs/RELEASING.md).
 
 ## License <a id="license"></a>
 
