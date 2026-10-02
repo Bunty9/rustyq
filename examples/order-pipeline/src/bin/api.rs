@@ -49,6 +49,11 @@ async fn main() -> anyhow::Result<()> {
         // /queue/healthz, /queue/metrics) in the app's own server. This is how
         // non-Rust producers (the Python client) reach the queue without a
         // separate rustyq-server deployment.
+        //
+        // SECURITY: rustyq's HTTP API has NO authentication; anyone who can
+        // reach it can enqueue any job kind with any payload. In a real app,
+        // wrap it in your auth middleware (e.g. `route_layer`) or serve it on
+        // an internal-only listener. Left open here for the demo.
         .nest("/queue", rustyq_server::router(pool));
 
     let listener = tokio::net::TcpListener::bind(args.bind).await?;
@@ -146,13 +151,13 @@ async fn get_order(
     .map_err(internal)?
     .ok_or((StatusCode::NOT_FOUND, "no such order".to_string()))?;
 
-    // Demo-grade lookup: `payload->>'order_id'` is a sequential scan of `jobs`
+    // Demo-grade lookup: `payload->>'order_id'` is a sequential scan of `rustyq_jobs`
     // plus one status query per job (N+1). In a real app store the job ids on
     // the order row (or add an expression index on the payload field).
-    // The `jobs` table is ordinary SQL: find this order's jobs by payload,
+    // The `rustyq_jobs` table is ordinary SQL: find this order's jobs by payload,
     // then use rustyq's `job_status` (the same view GET /queue/jobs/{id} gives).
     let ids: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM jobs WHERE payload->>'order_id' = $1::text ORDER BY created_at",
+        "SELECT id FROM rustyq_jobs WHERE payload->>'order_id' = $1::text ORDER BY created_at",
     )
     .bind(id)
     .fetch_all(&pool)

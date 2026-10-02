@@ -7,8 +7,6 @@ pub mod metrics;
 
 pub use api::router;
 pub use metrics::handle as metrics_handle;
-// `metrics_exporter_prometheus::PrometheusHandle` is intentionally NOT
-// re-exported — callers should use the `metrics_handle()` function and call
-// `.render()` on the returned handle. Keeping the third-party type private
-// stops a downstream `metrics-exporter-prometheus` semver bump from breaking
-// our public API.
+// Note: `metrics_handle()` returns `metrics_exporter_prometheus::PrometheusHandle`,
+// so that type is part of our public signature and this crate's API is
+// semver-coupled to metrics-exporter-prometheus 0.16.

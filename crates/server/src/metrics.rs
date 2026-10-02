@@ -15,10 +15,15 @@ const DURATION_BUCKETS: &[f64] = &[0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0,
 
 /// Install the Prometheus recorder on first call; return the cached handle
 /// on all subsequent calls.
+///
+/// If the embedding application already installed a global `metrics`
+/// recorder, ours cannot be installed: a warning is logged once and the
+/// returned handle belongs to an *uninstalled* recorder, so `/metrics` renders
+/// no rustyq series (the application's own recorder receives them instead).
 pub fn handle() -> PrometheusHandle {
     HANDLE
         .get_or_init(|| {
-            let h = PrometheusBuilder::new()
+            let recorder = PrometheusBuilder::new()
                 .set_buckets_for_metric(
                     Matcher::Full("rustyq_job_run_duration_seconds".to_string()),
                     DURATION_BUCKETS,
@@ -29,8 +34,15 @@ pub fn handle() -> PrometheusHandle {
                     DURATION_BUCKETS,
                 )
                 .expect("set buckets for rustyq_dispatch_latency_seconds")
-                .install_recorder()
-                .expect("install prometheus recorder");
+                .build_recorder();
+            let h = recorder.handle();
+            if let Err(e) = metrics::set_global_recorder(recorder) {
+                tracing::warn!(
+                    error = %e,
+                    "a global metrics recorder is already installed; rustyq's /metrics will be empty"
+                );
+                return h;
+            }
 
             // Register HELP strings so the text exposition has # HELP rustyq* lines.
             metrics::describe_counter!(

@@ -25,7 +25,7 @@ job to show a permanent failure.
                                     v
                         +-----------------------+
                         |       Postgres        |   orders, sent_emails, charges,
-                        |  (orders + `jobs`)    |   daily_reports  +  jobs
+                        |  (orders + `rustyq_jobs`)    |   daily_reports  +  rustyq_jobs
                         +-----------+-----------+
                                     ^ claim (FOR UPDATE SKIP LOCKED) / finalize
                                     |  LISTEN rustyq_new
@@ -100,7 +100,7 @@ curl -s localhost:3000/queue/metrics | grep rustyq_
 | Idempotent handlers (at-least-once) | `src/handlers.rs`: `SendConfirmation`, `ChargeCustomer` (`ON CONFLICT DO NOTHING`) |
 | Transient error -> retry with backoff | `src/handlers.rs`: `ChargeCustomer` (`attempt == 1` bails) |
 | Permanent error -> straight to `dead` | `src/handlers.rs`: `FraudReview`, `permanent(..)` |
-| Dead letter + `last_error` | `jobs` table; `producer.py`; "Operating it" below |
+| Dead letter + `last_error` | `rustyq_jobs` table; `producer.py`; "Operating it" below |
 | Reaper / lock timeout | `src/bin/worker.rs`: `Args::lock_timeout_secs` |
 | Graceful shutdown | `src/bin/worker.rs` (`CancellationToken`, `shutdown_grace`); `src/lib.rs`: `shutdown_signal` |
 | Metrics | `src/bin/worker.rs` (`PrometheusBuilder`); `src/bin/api.rs` (`metrics_handle()`) |
@@ -135,19 +135,24 @@ curl -s localhost:3000/queue/metrics | grep rustyq_
 
 ## Operating it
 
-Jobs are rows in the `jobs` table, so SQL is the admin console.
+**Security note:** the embedded `/queue` API has no authentication, so
+anyone who can reach it can enqueue any job kind with any payload. In a real
+app mount it behind your auth middleware (axum `route_layer`) or on an
+internal-only listener.
+
+Jobs are rows in the `rustyq_jobs` table, so SQL is the admin console.
 
 ```sql
 -- What is stuck or failed?
 SELECT id, kind, attempts, max_attempts, last_error, run_at
-FROM jobs WHERE state = 'dead' ORDER BY created_at DESC;
+FROM rustyq_jobs WHERE state = 'dead' ORDER BY created_at DESC;
 
 -- Queue depth by state
-SELECT queue, state, count(*) FROM jobs GROUP BY 1, 2 ORDER BY 1, 2;
+SELECT queue, state, count(*) FROM rustyq_jobs GROUP BY 1, 2 ORDER BY 1, 2;
 
 -- Requeue a dead job once you have fixed the cause. Leave `attempts`
 -- alone and grant extra retries by raising `max_attempts` instead.
-UPDATE jobs
+UPDATE rustyq_jobs
 SET state = 'queued', max_attempts = attempts + 3, run_at = now(),
     last_error = NULL, locked_at = NULL
 WHERE id = '<job id>' AND state = 'dead';

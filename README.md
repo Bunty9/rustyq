@@ -31,7 +31,7 @@ registered by job `kind` in the worker binary.
                  |
                  v
 +----------------+-------------------+        +----------------------+
-|   axum HTTP API (rustyq-server)    | <----> |  Postgres jobs table |
+|   axum HTTP API (rustyq-server)    | <----> | Postgres rustyq_jobs |
 |   POST /jobs   GET /jobs/{id}      |        |  FOR UPDATE          |
 |   GET /healthz GET /metrics        |        |  SKIP LOCKED         |
 +----------------+-------------------+        +----------+-----------+
@@ -61,7 +61,7 @@ longer than `lock_timeout` gets reaped and re-run by another worker while the
 original run may still be in flight. Handlers should be idempotent, or should
 use `job.attempts`/the job id to detect duplicate execution.
 
-- **Claim** — `claim_batch` does one `UPDATE jobs ... WHERE state='queued'
+- **Claim** — `claim_batch` does one `UPDATE rustyq_jobs ... WHERE state='queued'
   ... FOR UPDATE SKIP LOCKED LIMIT n RETURNING ...` per drain cycle, ordered
   by `priority DESC, run_at`. `SKIP LOCKED` makes concurrent claims from many
   workers safe without an app-level lock. (`crates/core/src/lib.rs`)
@@ -98,8 +98,10 @@ use `job.attempts`/the job id to detect duplicate execution.
   batch finalizer up to 10s to flush before exiting.
 - **Migrations** — `rustyq-server --migrate` (or `RUSTYQ_MIGRATE=true`) runs
   the migrations embedded in `rustyq-core` (`crates/core/migrations/`) against `DATABASE_URL` before serving. Opt-in and meant for
-  the server process only — never run it from every worker replica against a
-  shared database.
+  the server process only. sqlx takes an advisory lock, so concurrent
+  `migrate()` calls are safe; running it from a single process is still the
+  tidy default. rustyq owns the table `rustyq_jobs` in the connection's
+  current `search_path` schema (set `search_path` for a dedicated schema).
 - **Tracing** — `tracing` + optional OTLP export via
   `tracing-opentelemetry` when `OTEL_EXPORTER_OTLP_ENDPOINT` is set; falls
   back to plain JSON logs otherwise and never fails to start because of
@@ -233,7 +235,7 @@ maturin develop --release   # builds the wheel into your venv
 import rustyq
 
 client = rustyq.Client("http://localhost:8080", timeout_secs=10.0)
-job_id = client.enqueue("default", "sleep", {"ms": 100}, priority=0, delay_secs=0)
+job_id = client.enqueue("default", "sleep", {"ms": 100}, priority=0, delay_secs=0, max_attempts=3)
 print(client.status(job_id))  # -> {"id": ..., "state": "queued", "attempts": 0, ...}
 ```
 
@@ -282,9 +284,14 @@ Non-2xx responses raise `RuntimeError`; `status()` of an unknown job id raises
 
 ## HTTP API
 
+**No authentication.** The API (standalone, or embedded with
+`rustyq_server::router(pool)` nested into your app) lets anyone who can reach
+it enqueue any job kind with any payload. Put it behind your own auth
+middleware (e.g. axum `route_layer`) or on an internal-only listener.
+
 | Method | Path         | Body / params                                                                 | Response                                                                    |
 | ------ | ------------ | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
-| `POST` | `/jobs`      | `{"queue","kind","payload","priority"?:0,"delay_secs"?:0}`. Validates: `queue`/`kind` non-empty, `0 <= delay_secs <= i32::MAX`. | `200 {"id": "<uuid>"}`; `400` plain-text on a failed validation; axum's JSON-extractor rejection (`400`/`415`/`422`) on a malformed body or missing field; `500` on a DB error |
+| `POST` | `/jobs`      | `{"queue","kind","payload","priority"?:0,"delay_secs"?:0,"max_attempts"?:5}`. Validates: `queue`/`kind` non-empty, `0 <= delay_secs <= i32::MAX`, `1 <= max_attempts <= 1000`. | `200 {"id": "<uuid>"}`; `400` plain-text on a failed validation; axum's JSON-extractor rejection (`400`/`415`/`422`) on a malformed body or missing field; `500` on a DB error |
 | `GET`  | `/jobs/{id}` | —                                                                              | `200` `JobStatus` (`id, state, attempts, max_attempts, run_at, locked_by, last_error`), `404` if unknown, `400` if `{id}` is not a UUID |
 | `GET`  | `/healthz`   | —                                                                              | `200 "ok"` if `SELECT 1` succeeds against Postgres, else `503`                |
 | `GET`  | `/metrics`   | —                                                                              | Prometheus text exposition of `rustyq_jobs_enqueued_total{queue,kind}`; worker-side series are on each worker's own listener (see Features → Metrics) |

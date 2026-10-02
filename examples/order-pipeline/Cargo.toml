@@ -19,7 +19,7 @@ rustyq-client = { path = "../../crates/client" }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 axum = { workspace = true }
-sqlx = { workspace = true }
+sqlx = { workspace = true, features = ["tls-rustls"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }

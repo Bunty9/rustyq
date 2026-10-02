@@ -99,6 +99,14 @@ async fn metrics_handler() -> (StatusCode, [(header::HeaderName, &'static str); 
     )
 }
 
+/// Build the HTTP API (`/jobs`, `/jobs/{id}`, `/healthz`, `/metrics`).
+///
+/// There is no authentication: mount it behind your own auth middleware or on
+/// an internal-only listener.
+///
+/// This installs rustyq's Prometheus recorder as the process-global `metrics`
+/// recorder. If one is already installed (the embedding app's own), a warning
+/// is logged and `/metrics` renders without rustyq's series.
 pub fn router(pool: PgPool) -> Router {
     // Install the recorder now so enqueues before the first scrape are counted.
     crate::metrics::handle();
