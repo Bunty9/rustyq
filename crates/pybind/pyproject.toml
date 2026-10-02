@@ -8,13 +8,11 @@ dynamic = ["version"]
 description = "Python client for the rustyq durable job queue (Rust-native, Postgres-backed)."
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "MIT OR Apache-2.0" }
+license = "MIT OR Apache-2.0"
 license-files = ["LICENSE-MIT", "LICENSE-APACHE"]
 keywords = ["queue", "jobs", "rust", "postgres", "celery"]
 classifiers = [
     "Development Status :: 3 - Alpha",
-    "License :: OSI Approved :: MIT License",
-    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
