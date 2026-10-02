@@ -11,8 +11,12 @@ members = [
 [workspace.package]
 edition = "2021"
 version = "0.1.0"
-rust-version = "1.78"
+rust-version = "1.88"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/Bunty9/rustyq"
+homepage = "https://github.com/Bunty9/rustyq"
+keywords = ["queue", "job-queue", "postgres", "background-jobs", "worker"]
+categories = ["asynchronous", "database"]
 
 [workspace.dependencies]
 # Runtime + HTTP
@@ -66,7 +70,7 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
 
 # Python bindings
-pyo3 = { version = "0.29", features = ["extension-module"] }
+pyo3 = { version = "0.29", features = ["extension-module", "abi3-py39"] }
 
 [profile.release]
 lto = "fat"
