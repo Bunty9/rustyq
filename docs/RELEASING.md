@@ -54,9 +54,10 @@ failed run can be re-run safely.
 
 ## Dry run
 
-Actions -> release -> "Run workflow" (on any branch). Everything builds, but
-the version-vs-tag check is skipped and no publish, image push or release job
-runs. To check packaging locally:
+Actions -> release -> "Run workflow" on a branch (not a tag). Everything
+builds, but the version-vs-tag check is skipped and no publish, image push or
+release job runs: those only run for a pushed `v*` tag, never for a manual
+dispatch. To check packaging locally:
 
 ```bash
 cargo package -p rustyq-core -p rustyq-server -p rustyq-worker -p rustyq-client

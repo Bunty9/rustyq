@@ -38,7 +38,7 @@ jobs:
           - { os: ubuntu-latest, target: x86_64, manylinux: auto }
           - { os: ubuntu-latest, target: aarch64, manylinux: auto }
           - { os: macos-14, target: aarch64 }
-          - { os: macos-13, target: x86_64 }
+          - { os: macos-14, target: x86_64 }
           - { os: windows-latest, target: x64 }
     steps:
       - uses: actions/checkout@v4
@@ -71,7 +71,7 @@ jobs:
 
   publish-pypi:
     needs: [version, wheels, sdist]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -85,10 +85,12 @@ jobs:
           merge-multiple: true
           path: dist
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
 
   publish-crates:
     needs: version
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     environment:
       name: crates-io
@@ -125,7 +127,7 @@ jobs:
 
   docker:
     needs: version
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -154,8 +156,8 @@ jobs:
           cache-to: type=gha,mode=max
 
   github-release:
-    needs: [version, wheels, sdist]
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [version, wheels, sdist, publish-pypi, publish-crates]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -171,7 +173,7 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           awk -v v="$VERSION" '
-            /^## \[/ { if (found) exit; if (index($0, "## [" v "]") == 1) { found = 1; next } }
+            /^## \[/ || /^\[[0-9][^]]*\]:/ { if (found) exit; if (index($0, "## [" v "]") == 1) { found = 1; next } }
             found { print }
           ' CHANGELOG.md > notes.md
           test -s notes.md || { echo "::error::no CHANGELOG.md section for $VERSION"; exit 1; }
@@ -180,5 +182,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --title "rustyq $VERSION" --notes-file notes.md --verify-tag
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --title "rustyq $VERSION" --notes-file notes.md --verify-tag
+          fi
