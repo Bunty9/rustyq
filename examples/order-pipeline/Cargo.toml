@@ -1,0 +1,30 @@
+[package]
+name = "order-pipeline"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "End-to-end reference app embedding rustyq: api + worker + producers."
+
+# In your own project, depend on the published crates instead of paths:
+#   rustyq-core = "0.1"
+#   rustyq-server = "0.1"   # only if you embed the HTTP API like src/bin/api.rs
+#   rustyq-client = "0.1"   # only for the separate producer service
+[dependencies]
+rustyq-core = { path = "../../crates/core" }
+rustyq-server = { path = "../../crates/server" }
+rustyq-client = { path = "../../crates/client" }
+
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+axum = { workspace = true }
+sqlx = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+clap = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }

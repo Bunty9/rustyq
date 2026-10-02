@@ -6,6 +6,7 @@ members = [
     "crates/worker",
     "crates/pybind",
     "crates/client",
+    "examples/order-pipeline",
 ]
 
 [workspace.package]

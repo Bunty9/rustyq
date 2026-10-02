@@ -53,6 +53,41 @@ jobs:
       - name: cargo nextest
         run: cargo nextest run --workspace --no-fail-fast --test-threads=1
 
+  example:
+    name: example (order-pipeline end-to-end)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=2s
+          --health-timeout=3s
+          --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build and install the Python wheel
+        run: |
+          pip install maturin
+          maturin build --release -m crates/pybind/Cargo.toml --out dist
+          pip install dist/*.whl
+      # demo.sh creates its own `order_pipeline` database (runner has psql).
+      - name: Run the order-pipeline demo
+        env:
+          PYTHON_CLIENT: "1"
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+        run: examples/order-pipeline/demo.sh
+
   deny:
     name: cargo-deny
     runs-on: ubuntu-latest
