@@ -100,6 +100,8 @@ async fn metrics_handler() -> (StatusCode, [(header::HeaderName, &'static str); 
 }
 
 pub fn router(pool: PgPool) -> Router {
+    // Install the recorder now so enqueues before the first scrape are counted.
+    crate::metrics::handle();
     Router::new()
         .route("/jobs", post(enqueue))
         .route("/jobs/{id}", get(status))

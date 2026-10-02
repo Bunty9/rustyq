@@ -40,11 +40,6 @@ async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let pool = connect_and_migrate(&args.database_url, 10).await?;
 
-    // rustyq-server counts enqueues through the global `metrics` recorder,
-    // which `metrics_handle()` installs on first call. Call it now, otherwise
-    // enqueues before the first scrape of /queue/metrics would go uncounted.
-    rustyq_server::metrics_handle();
-
     let app = Router::new()
         .route("/orders", post(create_order))
         .route("/orders/{id}", get(get_order))
