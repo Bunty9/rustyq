@@ -32,6 +32,29 @@ struct EnqueueReq<'a> {
     priority: i16,
     #[serde(skip_serializing_if = "is_zero_i64")]
     delay_secs: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_attempts: Option<i32>,
+}
+
+/// Optional knobs for [`Client::enqueue_with`].
+#[derive(Debug, Clone, Default)]
+pub struct EnqueueOptions {
+    pub priority: i16,
+    pub delay_secs: i64,
+    /// Server default (5) when `None`.
+    pub max_attempts: Option<i32>,
+}
+
+/// Job status as returned by `GET /jobs/{id}`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct JobStatus {
+    pub id: Uuid,
+    pub state: String,
+    pub attempts: i32,
+    pub max_attempts: i32,
+    pub run_at: String,
+    pub locked_by: Option<String>,
+    pub last_error: Option<String>,
 }
 
 fn is_zero_i16(x: &i16) -> bool {
@@ -74,24 +97,25 @@ impl Client {
         kind: &str,
         payload: serde_json::Value,
     ) -> Result<Uuid, Error> {
-        self.enqueue_with(queue, kind, payload, 0, 0).await
+        self.enqueue_with(queue, kind, payload, EnqueueOptions::default())
+            .await
     }
 
-    /// Full enqueue with priority + delay.
+    /// Enqueue with explicit [`EnqueueOptions`].
     pub async fn enqueue_with(
         &self,
         queue: &str,
         kind: &str,
         payload: serde_json::Value,
-        priority: i16,
-        delay_secs: i64,
+        opts: EnqueueOptions,
     ) -> Result<Uuid, Error> {
         let req = EnqueueReq {
             queue,
             kind,
             payload,
-            priority,
-            delay_secs,
+            priority: opts.priority,
+            delay_secs: opts.delay_secs,
+            max_attempts: opts.max_attempts,
         };
         let resp: EnqueueResp = self
             .http
@@ -106,5 +130,18 @@ impl Client {
             return Err(Error::MissingId);
         }
         Ok(Uuid::parse_str(&resp.id)?)
+    }
+
+    /// Fetch a job's status; `Ok(None)` if the id is unknown.
+    pub async fn status(&self, id: Uuid) -> Result<Option<JobStatus>, Error> {
+        let resp = self
+            .http
+            .get(format!("{}/jobs/{id}", self.base_url))
+            .send()
+            .await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        Ok(Some(resp.error_for_status()?.json().await?))
     }
 }

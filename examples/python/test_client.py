@@ -45,3 +45,10 @@ def test_priority_and_delay_secs_accepted(client):
     status = client.status(job_id)
     run_at = datetime.fromisoformat(status["run_at"].replace("Z", "+00:00"))
     assert run_at > datetime.now(timezone.utc)
+
+
+def test_max_attempts_round_trips(client):
+    job_id = client.enqueue(f"test-{uuid.uuid4()}", "noop", {}, max_attempts=7)
+    assert client.status(job_id)["max_attempts"] == 7
+    job_id = client.enqueue(f"test-{uuid.uuid4()}", "noop", {})
+    assert client.status(job_id)["max_attempts"] == 5

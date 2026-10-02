@@ -31,7 +31,8 @@ impl Client {
 
     /// Enqueue a job. `payload` is any JSON-serialisable Python object
     /// (dict/list/str/number/None), serialised with Python's own `json.dumps`.
-    #[pyo3(signature = (queue, kind, payload=None, *, priority=0, delay_secs=0))]
+    #[pyo3(signature = (queue, kind, payload=None, *, priority=0, delay_secs=0, max_attempts=None))]
+    #[allow(clippy::too_many_arguments)]
     fn enqueue(
         &self,
         py: Python<'_>,
@@ -40,19 +41,23 @@ impl Client {
         payload: Option<Bound<'_, PyAny>>,
         priority: i16,
         delay_secs: i64,
+        max_attempts: Option<i32>,
     ) -> PyResult<String> {
         let json = py.import("json")?;
         let payload = payload.unwrap_or_else(|| py.None().into_bound(py));
         let payload_str: String = json.call_method1("dumps", (payload,))?.extract()?;
         let parsed: serde_json::Value = serde_json::from_str(&payload_str)
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "queue": queue,
             "kind": kind,
             "payload": parsed,
             "priority": priority,
             "delay_secs": delay_secs,
         });
+        if let Some(n) = max_attempts {
+            body["max_attempts"] = n.into();
+        }
 
         let base_url = self.base_url.clone();
         let client = self.client.clone();

@@ -10,9 +10,10 @@ pub use handler::{Handler, HandlerFut, Registry, RegistryBuilder};
 
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use sqlx::migrate::Migrator;
 use sqlx::types::Json;
-use sqlx::{postgres::PgListener, FromRow, PgPool};
-use std::sync::Arc;
+use sqlx::{postgres::PgListener, FromRow, PgExecutor, PgPool};
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 use tokio::sync::{mpsc, OwnedSemaphorePermit, Semaphore};
 use tokio::time::{interval, sleep, timeout, Duration, MissedTickBehavior};
@@ -21,7 +22,7 @@ use tracing::Instrument;
 use uuid::Uuid;
 
 /// Job lifecycle states. Matches the `state` column CHECK constraint in
-/// `migrations/0001_init.sql`.
+/// `migrations/0001_init.sql` (embedded in this crate).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum JobState {
@@ -60,6 +61,156 @@ pub struct Job {
     pub locked_by: Option<String>,
     pub last_error: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl Job {
+    /// Deserialize the JSON payload into `T`.
+    pub fn payload_as<T: serde::de::DeserializeOwned>(&self) -> Result<T, serde_json::Error> {
+        serde_json::from_value(self.payload.0.clone())
+    }
+}
+
+/// rustyq's embedded schema migrations (`crates/core/migrations`).
+pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
+
+/// Apply rustyq's migrations to `pool`.
+///
+/// Runs with `ignore_missing = true`, so an application that shares the
+/// `_sqlx_migrations` table with its own migrations (e.g. timestamp-versioned)
+/// can call this without sqlx rejecting the application's applied versions as
+/// "missing". rustyq's own versions are `0001..`, which sort before any
+/// timestamp version. Use [`MIGRATOR`] directly for strict checking.
+pub async fn migrate(pool: &PgPool) -> Result<(), sqlx::migrate::MigrateError> {
+    // Same migrations as MIGRATOR, but tolerant of versions applied by someone else.
+    static LENIENT: OnceLock<Migrator> = OnceLock::new();
+    LENIENT
+        .get_or_init(|| {
+            let mut m = sqlx::migrate!("./migrations");
+            m.set_ignore_missing(true);
+            m
+        })
+        .run(pool)
+        .await
+}
+
+/// A job to enqueue with [`enqueue`].
+#[derive(Debug, Clone)]
+pub struct NewJob {
+    pub queue: String,
+    pub kind: String,
+    pub payload: serde_json::Value,
+    pub priority: i16,
+    /// Earliest run time, relative to now.
+    pub delay: Duration,
+    pub max_attempts: i32,
+}
+
+impl NewJob {
+    /// Priority 0, no delay, 5 attempts.
+    pub fn new(
+        queue: impl Into<String>,
+        kind: impl Into<String>,
+        payload: serde_json::Value,
+    ) -> Self {
+        Self {
+            queue: queue.into(),
+            kind: kind.into(),
+            payload,
+            priority: 0,
+            delay: Duration::ZERO,
+            max_attempts: 5,
+        }
+    }
+    pub fn priority(mut self, p: i16) -> Self {
+        self.priority = p;
+        self
+    }
+    pub fn delay(mut self, d: Duration) -> Self {
+        self.delay = d;
+        self
+    }
+    pub fn max_attempts(mut self, n: i32) -> Self {
+        self.max_attempts = n;
+        self
+    }
+}
+
+/// Insert a job and wake workers, in one statement. Accepts a pool, a
+/// connection, or a transaction (`&mut *tx`): NOTIFY is delivered at commit,
+/// so enqueueing inside a transaction that rolls back leaves neither a row nor
+/// a wakeup, and a woken worker always sees the committed row.
+pub async fn enqueue<'e, E: PgExecutor<'e>>(executor: E, job: &NewJob) -> sqlx::Result<Uuid> {
+    let id = Uuid::now_v7();
+    sqlx::query(
+        "WITH ins AS (
+           INSERT INTO jobs (id, queue, kind, payload, state, priority, run_at, max_attempts)
+           VALUES ($1, $2, $3, $4, 'queued', $5, now() + make_interval(secs => $6), $7)
+         ) SELECT pg_notify('rustyq_new', '')",
+    )
+    .bind(id)
+    .bind(&job.queue)
+    .bind(&job.kind)
+    .bind(&job.payload)
+    .bind(job.priority)
+    .bind(job.delay.as_secs_f64())
+    .bind(job.max_attempts)
+    .execute(executor)
+    .await?;
+    Ok(id)
+}
+
+/// Wrapper marking a handler error as non-retryable: [`finalize`] sends the
+/// job straight to `dead`. Build one with [`permanent`].
+#[derive(Debug)]
+pub struct Permanent(pub anyhow::Error);
+
+impl std::fmt::Display for Permanent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl std::error::Error for Permanent {
+    // Display already prints the inner message; expose the inner error's own
+    // cause (not the inner error again) so `{:#}` chains don't repeat it.
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.0.chain().nth(1)
+    }
+}
+
+/// Mark `err` as permanent: the job is not retried. Adding `.context(..)`
+/// afterwards is fine; [`finalize`] still recognises it.
+pub fn permanent(err: impl Into<anyhow::Error>) -> anyhow::Error {
+    anyhow::Error::new(Permanent(err.into()))
+}
+
+/// Status row returned by `GET /jobs/:id`: state, retry progress, the
+/// scheduled next run, and any preserved error text. Internal columns like
+/// `payload` and `locked_at` are deliberately omitted to keep the surface
+/// stable.
+#[derive(Debug, Clone, Serialize, FromRow)]
+pub struct JobStatus {
+    pub id: Uuid,
+    pub state: String,
+    pub attempts: i32,
+    pub max_attempts: i32,
+    pub run_at: chrono::DateTime<Utc>,
+    pub locked_by: Option<String>,
+    pub last_error: Option<String>,
+}
+
+/// Look up a job's [`JobStatus`].
+pub async fn job_status<'e, E: PgExecutor<'e>>(
+    executor: E,
+    id: Uuid,
+) -> sqlx::Result<Option<JobStatus>> {
+    sqlx::query_as::<_, JobStatus>(
+        "SELECT id, state, attempts, max_attempts, run_at, locked_by, last_error \
+         FROM jobs WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(executor)
+    .await
 }
 
 /// A long-running worker. Listens on `rustyq_new` LISTEN/NOTIFY and falls
@@ -337,8 +488,7 @@ impl Worker {
         if n == 0 {
             return Ok(Vec::new());
         }
-        let rows = sqlx::query_as!(
-            Job,
+        let rows = sqlx::query_as::<_, Job>(
             r#"
             UPDATE jobs SET state='running', locked_at=now(), locked_by=$1, attempts=attempts+1
             WHERE id IN (
@@ -349,15 +499,14 @@ impl Worker {
               LIMIT $3
             )
             RETURNING
-              id, queue, kind,
-              payload as "payload: Json<serde_json::Value>",
+              id, queue, kind, payload,
               state, priority, attempts, max_attempts,
               run_at, locked_at, locked_by, last_error, created_at
             "#,
-            self.id,
-            &self.queues,
-            n as i64,
         )
+        .bind(&self.id)
+        .bind(&self.queues)
+        .bind(n as i64)
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)
@@ -374,7 +523,7 @@ impl Worker {
 /// presumed dead). Jobs that already used their attempt budget go to `dead`
 /// instead. Returns the number of rows touched.
 pub async fn reap_stale(pool: &PgPool, lock_timeout: Duration) -> sqlx::Result<u64> {
-    let result = sqlx::query!(
+    let result = sqlx::query(
         r#"
         UPDATE jobs
         SET state = CASE WHEN attempts >= max_attempts THEN 'dead' ELSE 'queued' END,
@@ -382,8 +531,8 @@ pub async fn reap_stale(pool: &PgPool, lock_timeout: Duration) -> sqlx::Result<u
             last_error = COALESCE(last_error, 'lock expired: worker presumed dead')
         WHERE state='running' AND locked_at < now() - make_interval(secs => $1)
         "#,
-        lock_timeout.as_secs_f64(),
     )
+    .bind(lock_timeout.as_secs_f64())
     .execute(pool)
     .await?;
     let n = result.rows_affected();
@@ -405,17 +554,17 @@ pub async fn finalize_done_batch(
     jobs: &[(Uuid, i32)],
 ) -> sqlx::Result<u64> {
     let (ids, attempts): (Vec<Uuid>, Vec<i32>) = jobs.iter().copied().unzip();
-    let n = sqlx::query!(
+    let n = sqlx::query(
         r#"
         UPDATE jobs SET state='done', locked_at=NULL
         FROM UNNEST($2::uuid[], $3::int4[]) AS f(id, attempts)
         WHERE jobs.id=f.id AND jobs.attempts=f.attempts
           AND jobs.state='running' AND jobs.locked_by=$1
         "#,
-        worker_id,
-        &ids,
-        &attempts,
     )
+    .bind(worker_id)
+    .bind(&ids)
+    .bind(&attempts)
     .execute(pool)
     .await?
     .rows_affected();
@@ -431,7 +580,7 @@ pub async fn finalize_done_batch(
 }
 
 /// Finalize a claimed job. On success → `done`. On error past the attempt
-/// budget → `dead`. Otherwise → requeue with exponential backoff
+/// budget, or on a [`Permanent`] error → `dead`. Otherwise → requeue with exponential backoff
 /// (2^attempts, capped at 1 hour).
 ///
 /// Every update is fenced on `state='running' AND locked_by=$worker_id AND
@@ -452,13 +601,13 @@ pub async fn finalize(
 ) -> sqlx::Result<Option<&'static str>> {
     match res {
         Ok(()) => {
-            let result = sqlx::query!(
+            let result = sqlx::query(
                 "UPDATE jobs SET state='done', locked_at=NULL \
                  WHERE id=$1 AND state='running' AND locked_by=$2 AND attempts=$3",
-                job.id,
-                worker_id,
-                job.attempts,
             )
+            .bind(job.id)
+            .bind(worker_id)
+            .bind(job.attempts)
             .execute(pool)
             .await?;
             if result.rows_affected() == 0 {
@@ -472,15 +621,15 @@ pub async fn finalize(
             .increment(1);
             Ok(Some("done"))
         }
-        Err(e) if job.attempts >= job.max_attempts => {
-            let result = sqlx::query!(
+        Err(e) if job.attempts >= job.max_attempts || e.is::<Permanent>() => {
+            let result = sqlx::query(
                 "UPDATE jobs SET state='dead', last_error=$2, locked_at=NULL \
                  WHERE id=$1 AND state='running' AND locked_by=$3 AND attempts=$4",
-                job.id,
-                e.to_string(),
-                worker_id,
-                job.attempts,
             )
+            .bind(job.id)
+            .bind(format!("{e:#}"))
+            .bind(worker_id)
+            .bind(job.attempts)
             .execute(pool)
             .await?;
             if result.rows_affected() == 0 {
@@ -498,16 +647,16 @@ pub async fn finalize(
             // Exponential backoff: 2^attempts seconds, capped at 1 hour.
             let shift = job.attempts.min(12) as u32;
             let delay = (1u64 << shift).min(3600) as i32;
-            let result = sqlx::query!(
+            let result = sqlx::query(
                 "UPDATE jobs SET state='queued', last_error=$2, \
                  run_at = now() + make_interval(secs => $3::int), locked_at=NULL \
                  WHERE id=$1 AND state='running' AND locked_by=$4 AND attempts=$5",
-                job.id,
-                e.to_string(),
-                delay,
-                worker_id,
-                job.attempts,
             )
+            .bind(job.id)
+            .bind(format!("{e:#}"))
+            .bind(delay)
+            .bind(worker_id)
+            .bind(job.attempts)
             .execute(pool)
             .await?;
             if result.rows_affected() == 0 {

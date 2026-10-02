@@ -6,7 +6,9 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use rustyq_core::NewJob;
 use sqlx::PgPool;
+use std::time::Duration;
 use tower_http::trace::TraceLayer;
 use uuid::Uuid;
 
@@ -19,6 +21,12 @@ pub struct EnqueueReq {
     pub priority: i16,
     #[serde(default)]
     pub delay_secs: i64,
+    #[serde(default = "default_max_attempts")]
+    pub max_attempts: i32,
+}
+
+fn default_max_attempts() -> i32 {
+    5
 }
 
 async fn enqueue(
@@ -38,26 +46,20 @@ async fn enqueue(
         ));
     }
 
-    let id = Uuid::now_v7();
-    // INSERT and NOTIFY in one statement: one round trip, and the
-    // notification is delivered at commit, so a woken worker always sees the
-    // row. Workers also fall back to a 1s poll.
-    sqlx::query!(
-        r#"WITH ins AS (
-             INSERT INTO jobs (id, queue, kind, payload, state, priority, run_at)
-             VALUES ($1, $2, $3, $4, 'queued', $5, now() + make_interval(secs => $6::int))
-           )
-           SELECT pg_notify('rustyq_new', '')::text AS "notified""#,
-        id,
-        req.queue,
-        req.kind,
-        req.payload,
-        req.priority,
-        req.delay_secs as i32,
-    )
-    .fetch_one(&pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    if !(1..=1000).contains(&req.max_attempts) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "max_attempts must be between 1 and 1000".into(),
+        ));
+    }
+
+    let job = NewJob::new(req.queue.clone(), req.kind.clone(), req.payload)
+        .priority(req.priority)
+        .delay(Duration::from_secs(req.delay_secs as u64))
+        .max_attempts(req.max_attempts);
+    let id = rustyq_core::enqueue(&pool, &job)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
     // Increment enqueue counter.
     metrics::counter!(
@@ -70,35 +72,13 @@ async fn enqueue(
     Ok(Json(serde_json::json!({ "id": id })))
 }
 
-/// Status row returned by `GET /jobs/:id`. Mirrors the columns most relevant
-/// to a Python caller waiting on a background job: state, retry progress, the
-/// scheduled next run, and any preserved error text. Internal columns like
-/// `payload` and `locked_at` are deliberately omitted to keep the surface
-/// stable.
-#[derive(serde::Serialize, sqlx::FromRow)]
-pub struct JobStatus {
-    pub id: Uuid,
-    pub state: String,
-    pub attempts: i32,
-    pub max_attempts: i32,
-    pub run_at: chrono::DateTime<chrono::Utc>,
-    pub locked_by: Option<String>,
-    pub last_error: Option<String>,
-}
-
 async fn status(
     State(pool): State<PgPool>,
     Path(id): Path<Uuid>,
-) -> Result<Json<JobStatus>, (StatusCode, String)> {
-    let row = sqlx::query_as!(
-        JobStatus,
-        r#"SELECT id, state, attempts, max_attempts, run_at, locked_by, last_error
-           FROM jobs WHERE id = $1"#,
-        id,
-    )
-    .fetch_optional(&pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+) -> Result<Json<rustyq_core::JobStatus>, (StatusCode, String)> {
+    let row = rustyq_core::job_status(&pool, id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     row.map(Json)
         .ok_or((StatusCode::NOT_FOUND, "no such job".to_string()))
 }

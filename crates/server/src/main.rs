@@ -43,7 +43,7 @@ async fn main() -> anyhow::Result<()> {
 
     if args.migrate {
         tracing::info!("running pending migrations");
-        sqlx::migrate!("../../migrations").run(&pool).await?;
+        rustyq_core::migrate(&pool).await?;
     }
 
     let app = router(pool);

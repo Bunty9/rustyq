@@ -82,6 +82,28 @@ async fn rejects_oversized_delay_secs() {
 }
 
 #[tokio::test]
+async fn rejects_out_of_range_max_attempts() {
+    let Some(pool) = common::setup_pool().await else {
+        eprintln!("skipping: TEST_DATABASE_URL unset");
+        return;
+    };
+    for bad in [0, -1, 1001] {
+        let status = post_jobs(
+            router(pool.clone()),
+            json!({ "queue": "default", "kind": "noop", "payload": {}, "max_attempts": bad }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "max_attempts={bad}");
+    }
+    let status = post_jobs(
+        router(pool),
+        json!({ "queue": "default", "kind": "noop", "payload": {}, "max_attempts": 1000 }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+#[tokio::test]
 async fn accepts_valid_request() {
     let Some(pool) = common::setup_pool().await else {
         eprintln!("skipping: TEST_DATABASE_URL unset");

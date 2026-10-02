@@ -32,10 +32,6 @@ jobs:
           --health-retries=20
     env:
       TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
-      # Build via the committed .sqlx/ offline metadata so the test job does
-      # not need DATABASE_URL during compilation. The sqlx-check job below
-      # guarantees the metadata is in sync with the live schema.
-      SQLX_OFFLINE: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
@@ -56,37 +52,6 @@ jobs:
       # NOTIFY channel per-schema (tracked in PROGRESS.md).
       - name: cargo nextest
         run: cargo nextest run --workspace --no-fail-fast --test-threads=1
-
-  sqlx-check:
-    name: sqlx prepare --check
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: rustyq
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd="pg_isready -U postgres"
-          --health-interval=2s
-          --health-timeout=3s
-          --health-retries=20
-    env:
-      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/rustyq
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: sqlx-cli
-      - name: apply schema
-        run: |
-          for f in migrations/*.sql; do psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"; done
-      - name: cargo sqlx prepare --check
-        run: cargo sqlx prepare --workspace --check -- --tests
 
   deny:
     name: cargo-deny
@@ -120,7 +85,6 @@ jobs:
           --health-timeout=3s
           --health-retries=20
     env:
-      SQLX_OFFLINE: "true"
       BENCH_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
       BENCH_JOBS: "10000"
       BENCH_LATENCY_JOBS: "500"

@@ -65,12 +65,7 @@ async fn main() -> anyhow::Result<()> {
     sqlx::raw_sql(&format!("CREATE SCHEMA \"{schema}\""))
         .execute(&pool)
         .await?;
-    sqlx::raw_sql(concat!(
-        include_str!("../../../migrations/0001_init.sql"),
-        include_str!("../../../migrations/0002_dispatch_index.sql"),
-    ))
-    .execute(&pool)
-    .await?;
+    rustyq_core::migrate(&pool).await?;
 
     let result = run(&pool, jobs, workers, concurrency, latency_jobs).await;
     sqlx::raw_sql(&format!("DROP SCHEMA \"{schema}\" CASCADE"))

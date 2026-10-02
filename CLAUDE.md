@@ -23,19 +23,13 @@ bench/celery/run.sh 20000 4         # Celery baseline (separate compose project)
 
 ## Rules that bite
 
-- **`sqlx::query!` macros + offline metadata.** After adding or changing any
-  `query!`/`query_as!`, regenerate `.sqlx/` and commit it (CI runs
-  `cargo sqlx prepare --workspace --check -- --tests`):
-  ```bash
-  docker exec rustyq-test-pg psql -U postgres -c 'DROP DATABASE IF EXISTS rustyq_prepare' -c 'CREATE DATABASE rustyq_prepare'
-  for f in migrations/*.sql; do docker exec -i rustyq-test-pg psql -U postgres -d rustyq_prepare < "$f"; done
-  DATABASE_URL=postgres://postgres:postgres@127.0.0.1:55432/rustyq_prepare cargo sqlx prepare --workspace -- --tests
-  ```
+- **No `sqlx::query!`/`query_as!` macros.** Library crates use runtime
+  queries (`sqlx::query(..).bind(..)`): a downstream crate with
+  `DATABASE_URL` set at compile time would run our macros against *its* DB.
 - **Migrations are append-only.** Never edit an existing file in
-  `migrations/` (sqlx checksums; initdb'd volumes keep old objects). Add
-  `000N_*.sql` and also append it to the `concat!(include_str!(..))` lists in
-  `crates/core/tests/common/mod.rs`, `crates/server/tests/common/mod.rs` and
-  `crates/core/benches/drain.rs`.
+  `crates/core/migrations/` (sqlx checksums; initdb'd volumes keep old
+  objects). Add `000N_*.sql`; they are embedded via `sqlx::migrate!` and tests
+  call `rustyq_core::migrate`, so there is no list to maintain.
 - **Tests need `--test-threads=1`**: every test binary shares the global
   `rustyq_new` NOTIFY channel (schemas are isolated, the channel is not).
 - **Timing assertions must be generous.** The dev box is shared and often

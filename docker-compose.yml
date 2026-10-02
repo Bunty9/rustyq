@@ -15,7 +15,7 @@ services:
     # `docker compose exec postgres psql ...` for ad-hoc queries.
     volumes:
       - rustyq_pg_data:/var/lib/postgresql/data
-      - ./migrations:/docker-entrypoint-initdb.d:ro
+      - ./crates/core/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U rustyq -d rustyq"]
       interval: 2s
