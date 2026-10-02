@@ -13,7 +13,7 @@ use anyhow::Context;
 use rustyq_core::{permanent, Handler, HandlerFut, Job};
 use sqlx::PgPool;
 
-use crate::{ChargePayload, EmailPayload, FraudPayload};
+use crate::{ChargePayload, EmailPayload, FraudPayload, ReportPayload};
 
 /// `email.order_confirmation`: "send" the confirmation email.
 pub struct SendConfirmation {
@@ -93,6 +93,13 @@ impl Handler for ChargeCustomer {
                 anyhow::bail!("payment gateway timeout");
             }
 
+            // Where a real gateway call goes: HERE, before the transaction
+            // below, passing `order_id` as the provider's idempotency key so a
+            // retry cannot double-charge. Never hold a pooled connection or an
+            // open transaction across a network call, and remember that
+            // rolling back the DB cannot undo an external charge: call the
+            // provider first, then record its result in the transaction.
+            //
             // Idempotency key = order_id (the `charges` primary key). If a
             // previous run committed the charge but the worker died before
             // rustyq marked the job done, the retry inserts nothing and just
@@ -149,7 +156,14 @@ pub struct DailyReport {
 }
 
 impl Handler for DailyReport {
-    fn call(&self, _job: &Job) -> HandlerFut {
+    fn call(&self, job: &Job) -> HandlerFut {
+        if let Err(e) = job.payload_as::<ReportPayload>() {
+            return Box::pin(async move {
+                Err(permanent(
+                    anyhow::Error::new(e).context("bad report payload"),
+                ))
+            });
+        }
         let pool = self.pool.clone();
         Box::pin(async move {
             // Not strictly idempotent: a re-run appends a second snapshot

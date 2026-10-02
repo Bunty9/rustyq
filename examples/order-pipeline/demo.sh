@@ -6,6 +6,7 @@
 #   PYTHON_CLIENT=1 examples/order-pipeline/demo.sh # also run producer.py (needs `rustyq` wheel)
 #
 # Env: DATABASE_URL (server URL; the demo uses its own database `order_pipeline`),
+#      DATABASE_URL must end in a database name; anything after the last '/' (incl. ?params) is replaced.
 #      PG_CONTAINER (container with psql, used when host psql is missing),
 #      APP_PORT (3000), METRICS_PORT (9464), KEEP_DB (keep container we started).
 set -euo pipefail
@@ -39,7 +40,9 @@ trap cleanup EXIT
 
 # ---- 1. database ----------------------------------------------------------
 if [ -z "${DATABASE_URL:-}" ]; then
-  if ! docker ps --format '{{.Names}}' | grep -qx "$PG_CONTAINER"; then
+  if docker ps -a --format '{{.Names}}' | grep -qx "$PG_CONTAINER"; then
+    docker start "$PG_CONTAINER" >/dev/null   # exists but stopped (no-op if running)
+  else
     echo "starting Postgres container $PG_CONTAINER on :55433"
     docker run -d --name "$PG_CONTAINER" -p 55433:5432 -e POSTGRES_PASSWORD=postgres \
       postgres:16-alpine >/dev/null
@@ -78,7 +81,8 @@ WORKER_PID=$!
 
 for _ in $(seq 120); do
   curl -fs "$API/queue/healthz" >/dev/null 2>&1 && break
-  kill -0 "$API_PID" 2>/dev/null || { echo "api died:"; cat "$LOGDIR/api.log"; exit 1; }
+  kill -0 "$API_PID" 2>/dev/null || { echo "api died:"; tail -n 30 "$LOGDIR/api.log"; exit 1; }
+  kill -0 "$WORKER_PID" 2>/dev/null || { echo "worker died:"; tail -n 30 "$LOGDIR/worker.log"; exit 1; }
   sleep 0.5
 done
 curl -fs "$API/queue/healthz" >/dev/null
@@ -140,6 +144,10 @@ for _ in $(seq 120); do
 done
 record "all 3 orders paid and all jobs terminal within 60s" "$settled"
 
+# GET /orders/{id}: 200 and both jobs listed.
+body=$(curl -fs "$API/orders/${ORDERS[0]}" || true)
+check_eq "GET /orders/{id}: order with its 2 jobs" \
+  "$(grep -o '"max_attempts"' <<<"$body" | wc -l | tr -d ' ')" 2
 # ---- 7. SQL assertions ------------------------------------------------------
 check_eq "sent_emails: 3 rows"                      "$(q "SELECT count(*) FROM sent_emails")" 3
 check_eq "sent_emails: every order exactly once"    "$(q "SELECT count(*) FROM orders o WHERE (SELECT count(*) FROM sent_emails s WHERE s.order_id=o.id)=1")" 3
@@ -163,13 +171,13 @@ fi
 # ---- 8. metrics -------------------------------------------------------------
 wm=$(curl -fs "$WORKER_METRICS" || true)
 am=$(curl -fs "$API/queue/metrics" || true)
-has() { if echo "$1" | grep -Eq "$2"; then echo 1; else echo 0; fi; }
+has() { if grep -Eq "$2" <<<"$1"; then echo 1; else echo 0; fi; }
 check_eq "worker metrics: rustyq_jobs_finished_total{state=done} > 0" "$(has "$wm" '^rustyq_jobs_finished_total\{state="done"\} [1-9]')" 1
 check_eq "worker metrics: rustyq_jobs_claimed_total present"         "$(has "$wm" '^rustyq_jobs_claimed_total\{')" 1
 check_eq "api metrics: rustyq_jobs_enqueued_total present"           "$(has "$am" '^rustyq_jobs_enqueued_total\{')" 1
 
 # ---- 9. graceful shutdown ---------------------------------------------------
-kill -TERM "$WORKER_PID" "$API_PID"
+kill -TERM "$WORKER_PID" "$API_PID" || true
 wrc=0; arc=0
 wait "$WORKER_PID" || wrc=$?
 wait "$API_PID" || arc=$?

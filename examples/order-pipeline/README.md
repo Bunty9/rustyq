@@ -30,9 +30,9 @@ job to show a permanent failure.
                                     ^ claim (FOR UPDATE SKIP LOCKED) / finalize
                                     |  LISTEN rustyq_new
                         +-----------+-----------+
-                        | worker (src/bin/worker)|  handlers in src/handlers.rs
-                        |  queues: default,      |  metrics on :9464
-                        |          payments      |
+                        | worker (bin/worker)   |  handlers in src/handlers.rs
+                        |  queues: default,     |  metrics on :9464
+                        |          payments     |
                         +-----------------------+
 ```
 
@@ -145,18 +145,20 @@ FROM jobs WHERE state = 'dead' ORDER BY created_at DESC;
 -- Queue depth by state
 SELECT queue, state, count(*) FROM jobs GROUP BY 1, 2 ORDER BY 1, 2;
 
--- Requeue a dead job once you have fixed the cause. Reset `attempts`,
--- otherwise it is dead again on its first failure (attempts >= max_attempts).
+-- Requeue a dead job once you have fixed the cause. Leave `attempts`
+-- alone and grant extra retries by raising `max_attempts` instead.
 UPDATE jobs
-SET state = 'queued', attempts = 0, run_at = now(), last_error = NULL, locked_at = NULL
+SET state = 'queued', max_attempts = attempts + 3, run_at = now(),
+    last_error = NULL, locked_at = NULL
 WHERE id = '<job id>' AND state = 'dead';
 SELECT pg_notify('rustyq_new', '');   -- optional: wake workers now; they also poll every second
 ```
 
 `attempts` counts claims (it is incremented when a worker claims the job) and
 is the fencing token for finalizing: a worker that lost its lock cannot
-overwrite a newer run. `max_attempts` is the budget; when `attempts` reaches it
-the next failure parks the job in `dead`. `last_error` is kept after a later
+overwrite a newer run, so never reset it. `max_attempts` is the budget; when
+`attempts` reaches it the next failure parks the job in `dead`, so raising
+`max_attempts` is how you grant retries. `last_error` is kept after a later
 success, which is why the demo can see the "gateway timeout" on a `done` job.
 
 ## Caveats

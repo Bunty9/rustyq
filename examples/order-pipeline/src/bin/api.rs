@@ -151,6 +151,9 @@ async fn get_order(
     .map_err(internal)?
     .ok_or((StatusCode::NOT_FOUND, "no such order".to_string()))?;
 
+    // Demo-grade lookup: `payload->>'order_id'` is a sequential scan of `jobs`
+    // plus one status query per job (N+1). In a real app store the job ids on
+    // the order row (or add an expression index on the payload field).
     // The `jobs` table is ordinary SQL: find this order's jobs by payload,
     // then use rustyq's `job_status` (the same view GET /queue/jobs/{id} gives).
     let ids: Vec<Uuid> = sqlx::query_scalar(

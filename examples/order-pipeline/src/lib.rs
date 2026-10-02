@@ -71,14 +71,16 @@ pub async fn connect_and_migrate(database_url: &str, pool_size: u32) -> anyhow::
 /// systemd all stop processes with SIGTERM.
 pub async fn shutdown_signal() {
     let ctrl_c = async {
-        let _ = tokio::signal::ctrl_c().await;
+        tokio::signal::ctrl_c()
+            .await
+            .expect("install Ctrl-C handler");
     };
     #[cfg(unix)]
     let term = async {
-        if let Ok(mut s) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-        {
-            s.recv().await;
-        }
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("install SIGTERM handler")
+            .recv()
+            .await;
     };
     #[cfg(not(unix))]
     let term = std::future::pending::<()>();
