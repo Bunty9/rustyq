@@ -36,18 +36,21 @@ jobs:
       matrix:
         include:
           - { os: ubuntu-latest, target: x86_64, manylinux: auto }
-          - { os: ubuntu-latest, target: aarch64, manylinux: auto }
+          - { os: ubuntu-latest, target: aarch64, manylinux: '2_28' }  # manylinux2014's cross gcc is too old for ring (__ARM_ARCH)
           - { os: macos-14, target: aarch64 }
           - { os: macos-14, target: x86_64 }
           - { os: windows-latest, target: x64 }
     steps:
       - uses: actions/checkout@v4
       # crates/pybind/LICENSE-* are symlinks; Git on Windows may check them
-      # out as text stubs, which would ship as the wheel's license files.
+      # out as text stubs, which would ship as the wheel's license files; replace
+      # them with real copies either way (cp refuses to copy onto a live symlink).
       - name: Materialize license files (Windows)
         if: runner.os == 'Windows'
         shell: bash
-        run: cp -f LICENSE-MIT LICENSE-APACHE crates/pybind/
+        run: |
+          rm -f crates/pybind/LICENSE-MIT crates/pybind/LICENSE-APACHE
+          cp LICENSE-MIT LICENSE-APACHE crates/pybind/
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'

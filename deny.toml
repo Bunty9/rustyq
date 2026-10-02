@@ -12,6 +12,8 @@ ignore = []
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+# examples/order-pipeline is publish = false and uses path-only deps.
+allow-wildcard-paths = true
 
 [licenses]
 version = 2
