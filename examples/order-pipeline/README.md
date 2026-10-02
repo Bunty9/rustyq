@@ -25,7 +25,7 @@ job to show a permanent failure.
                                     v
                         +-----------------------+
                         |       Postgres        |   orders, sent_emails, charges,
-                        |  (orders + `rustyq_jobs`)    |   daily_reports  +  rustyq_jobs
+                        | (orders + rustyq_jobs)|   daily_reports  +  rustyq_jobs
                         +-----------+-----------+
                                     ^ claim (FOR UPDATE SKIP LOCKED) / finalize
                                     |  LISTEN rustyq_new
