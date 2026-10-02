@@ -11,6 +11,17 @@ categories.workspace = true
 readme = "README.md"
 description = "Core types and worker loop for rustyq — Postgres-backed durable job queue."
 
+[features]
+default = ["telemetry"]
+# `rustyq_core::telemetry` (tracing-subscriber + optional OTLP export).
+telemetry = [
+  "dep:tracing-subscriber",
+  "dep:tracing-opentelemetry",
+  "dep:opentelemetry",
+  "dep:opentelemetry_sdk",
+  "dep:opentelemetry-otlp",
+]
+
 [lib]
 path = "src/lib.rs"
 
@@ -25,11 +36,11 @@ thiserror = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
-tracing-opentelemetry = { workspace = true }
-opentelemetry = { workspace = true }
-opentelemetry_sdk = { workspace = true }
-opentelemetry-otlp = { workspace = true }
+tracing-subscriber = { workspace = true, optional = true }
+tracing-opentelemetry = { workspace = true, optional = true }
+opentelemetry = { workspace = true, optional = true }
+opentelemetry_sdk = { workspace = true, optional = true }
+opentelemetry-otlp = { workspace = true, optional = true }
 metrics = { workspace = true }
 
 [dev-dependencies]

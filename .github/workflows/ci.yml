@@ -32,6 +32,8 @@ jobs:
           --health-retries=20
     env:
       TEST_DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/postgres
+      # rust-toolchain.toml (channel = stable) would otherwise override the matrix.
+      RUSTUP_TOOLCHAIN: ${{ matrix.rust }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
@@ -52,6 +54,19 @@ jobs:
       # NOTIFY channel per-schema (tracked in PROGRESS.md).
       - name: cargo nextest
         run: cargo nextest run --workspace --no-fail-fast --test-threads=1
+
+  msrv:
+    name: msrv (1.88)
+    runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: "1.88"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.88"
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace --all-targets
 
   example:
     name: example (order-pipeline end-to-end)

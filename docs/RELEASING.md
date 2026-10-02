@@ -16,14 +16,14 @@ environments, so they pause until a maintainer approves them.
    already exists, so the first release uses an API token:
    - Create a crates.io API token scoped to `publish-new` and
      `publish-update` for `rustyq-*`, then store it:
-     `gh secret set CARGO_REGISTRY_TOKEN --repo Bunty9/rustyq`
+     `gh secret set CARGO_REGISTRY_TOKEN --env crates-io --repo Bunty9/rustyq`
    - Approve the `crates-io` deployment when the release runs.
    - After the first release, for each of `rustyq-core`, `rustyq-client`,
      `rustyq-server`, `rustyq-worker`: crates.io -> the crate -> Settings ->
      Trusted Publishing -> Add, with Repository owner `Bunty9`, Repository
      `rustyq`, Workflow `release.yml`, Environment `crates-io`.
-   - Then remove the fallback: `gh secret delete CARGO_REGISTRY_TOKEN --repo
-     Bunty9/rustyq`, and revoke the token on crates.io.
+   - Then remove the fallback: `gh secret delete CARGO_REGISTRY_TOKEN --env crates-io
+     --repo Bunty9/rustyq`, and revoke the token on crates.io.
 
 3. **GitHub environments.** Create `pypi` and `crates-io` (Settings ->
    Environments) with the maintainer as a required reviewer. Publishing jobs

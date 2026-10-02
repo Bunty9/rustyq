@@ -47,12 +47,13 @@ pub struct EnqueueOptions {
 
 /// Job status as returned by `GET /jobs/{id}`.
 #[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
 pub struct JobStatus {
     pub id: Uuid,
     pub state: String,
     pub attempts: i32,
     pub max_attempts: i32,
-    pub run_at: String,
+    pub run_at: chrono::DateTime<chrono::Utc>,
     pub locked_by: Option<String>,
     pub last_error: Option<String>,
 }

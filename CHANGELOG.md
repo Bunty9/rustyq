@@ -36,11 +36,24 @@ First public release.
   drain/latency benchmarks, an end-to-end reference app
   (`examples/order-pipeline`), and a Docker image at `ghcr.io/bunty9/rustyq`.
 
+- Jobs live in the table `rustyq_jobs` (indexes `idx_rustyq_jobs_*`), in the
+  connection's current `search_path` schema, so it cannot collide with an
+  application's own `jobs` table; `max_attempts >= 1` is enforced by a CHECK.
+- `rustyq-server`, `rustyq-worker` and the Docker image support TLS Postgres
+  (`sslmode=require`) via sqlx `tls-rustls`; library crates leave TLS to the
+  embedder.
+- `rustyq-core` feature `telemetry` (default on) gates `rustyq_core::telemetry`
+  and its tracing-subscriber/OpenTelemetry dependencies.
+- `JobStatus` is `#[non_exhaustive]`; the client's `run_at` is a
+  `chrono::DateTime<Utc>`; `NewJob::max_attempts` clamps to at least 1.
+
 ### Fixed
 
 - `rustyq_server::router()` now installs the Prometheus recorder when the
   router is built; previously `rustyq_jobs_enqueued_total` increments made
-  before the first `/metrics` scrape were dropped.
+  before the first `/metrics` scrape were dropped. If the embedding app has
+  already installed a global `metrics` recorder, `router()` logs a warning
+  and `/metrics` renders without rustyq's series instead of panicking.
 
 ### API notes
 
